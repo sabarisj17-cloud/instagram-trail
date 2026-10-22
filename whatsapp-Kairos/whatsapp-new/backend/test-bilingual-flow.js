@@ -21,7 +21,7 @@ async function testBilingualFlow() {
   // Message 1st:
   console.assert(replies[0].type === "text", "1st message should be text");
   console.assert(
-    replies[0].text === "Welcome to Kairos Lite\nBienvenue sur Kairos Lite",
+    replies[0].text === "Welcome to Kairos\nBienvenue sur Kairos",
     `1st message mismatch: ${replies[0].text}`
   );
   console.log("✅ 1st Message Verified:\n" + replies[0].text);
@@ -29,13 +29,13 @@ async function testBilingualFlow() {
   // Message 2nd:
   console.assert(replies[1].type === "button", "2nd message should be button message");
   console.assert(
-    replies[1].body === "Pick your language and discover Kairos Lite!\nChoisissez votre langue et découvrez Kairos Lite !",
+    replies[1].body === "Pick your language\nChoisissez votre langue",
     `2nd message body mismatch: ${replies[1].body}`
   );
   console.assert(replies[1].buttons.length === 2, "Expected 2 buttons (English & French)");
   console.assert(replies[1].buttons[0].title === "English" && replies[1].buttons[0].id === "lang_en", "English button missing");
-  console.assert(replies[1].buttons[1].title === "French" && replies[1].buttons[1].id === "lang_fr", "French button missing");
-  console.log("✅ 2nd Message Verified:\n" + replies[1].body + "\nButtons: [English] [French]\n");
+  console.assert(replies[1].buttons[1].title === "Français" && replies[1].buttons[1].id === "lang_fr", "Français button missing");
+  console.log("✅ 2nd Message Verified:\n" + replies[1].body + "\nButtons: [English] [Français]\n");
 
   // =================================================================
   // TEST 2: User selects "French" -> Exact French Flow

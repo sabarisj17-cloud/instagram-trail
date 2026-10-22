@@ -13,7 +13,7 @@ async function testFrenchCourseFlow() {
   resetConversationState(testPhone);
   let replies = await chatbotService.processMessage(testPhone, "Bonjour");
   console.assert(replies.length === 2, `Step 1 Failed: Expected 2 items (welcome text + language buttons), got ${replies.length}`);
-  console.assert(replies[0].text.includes("Welcome to Kairos Lite\nBienvenue sur Kairos Lite"), "Step 1 Failed: Welcome bilingual mismatch");
+  console.assert(replies[0].text.includes("Welcome to Kairos\nBienvenue sur Kairos"), "Step 1 Failed: Welcome bilingual mismatch");
   console.assert(replies[1].buttons.some(b => b.id === "lang_fr"), "Step 1 Failed: French button missing");
   console.log("✅ Step 1: Language selection prompt delivered.");
 

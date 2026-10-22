@@ -10,11 +10,11 @@ const KAIROS_CONFIG = {
   
   // Screen 0: Initial Language Selection Sequence
   languageSelection: {
-    welcomeMessage: "Welcome to Kairos Lite\nBienvenue sur Kairos Lite",
-    prompt: "Pick your language and discover Kairos Lite!\nChoisissez votre langue et découvrez Kairos Lite !",
+    welcomeMessage: "Welcome to Kairos\nBienvenue sur Kairos",
+    prompt: "Pick your language\nChoisissez votre langue",
     buttons: [
       { id: "lang_en", title: "English" },
-      { id: "lang_fr", title: "French" }
+      { id: "lang_fr", title: "Français" }
     ]
   },
 
