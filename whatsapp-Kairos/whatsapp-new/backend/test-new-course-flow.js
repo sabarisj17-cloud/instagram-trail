@@ -8,28 +8,36 @@ async function testFrenchCourseFlow() {
 
   const testPhone = "919629531895";
 
-  // --- STEP 1: Client says "Bonjour" ---
-  console.log("--- STEP 1: Client says 'Bonjour' ---");
+  // --- STEP 1: Client says "Bonjour" -> Language Selection ---
+  console.log("--- STEP 1: Client says 'Bonjour' -> Language selection ---");
   resetConversationState(testPhone);
   let replies = await chatbotService.processMessage(testPhone, "Bonjour");
-  console.assert(replies.length === 3, `Step 1 Failed: Expected 3 items (text + poster + consent button), got ${replies.length}`);
+  console.assert(replies.length === 2, `Step 1 Failed: Expected 2 items (welcome text + language buttons), got ${replies.length}`);
+  console.assert(replies[0].text.includes("Welcome to Kairos Lite\nBienvenue sur Kairos Lite"), "Step 1 Failed: Welcome bilingual mismatch");
+  console.assert(replies[1].buttons.some(b => b.id === "lang_fr"), "Step 1 Failed: French button missing");
+  console.log("✅ Step 1: Language selection prompt delivered.");
+
+  // --- STEP 1b: Client selects "French" ---
+  console.log("--- STEP 1b: Client selects 'French' ---");
+  replies = await chatbotService.processMessage(testPhone, "French", "lang_fr");
+  console.assert(replies.length === 3, `Step 1b Failed: Expected 3 items (text + poster + consent button), got ${replies.length}`);
   
   // 1a: Welcome text
-  console.assert(replies[0].type === "text", "Step 1 Failed: 1st message should be text");
-  console.assert(replies[0].text === "Bienvenue sur Kairos – Votre professeur préféré.", `Step 1 Failed: Text mismatch: ${replies[0].text}`);
-  console.log(`✅ Step 1a: Welcome message in French: "${replies[0].text}"`);
+  console.assert(replies[0].type === "text", "Step 1b Failed: 1st message should be text");
+  console.assert(replies[0].text === "Bienvenue sur Kairos – Votre professeur préféré.", `Step 1b Failed: Text mismatch: ${replies[0].text}`);
+  console.log(`✅ Step 1b: Welcome message in French: "${replies[0].text}"`);
 
   // 1b: Poster image
-  console.assert(replies[1].type === "image", "Step 1 Failed: 2nd message should be image");
-  console.assert(replies[1].url.includes("programme_poster.jpg"), `Step 1 Failed: Image URL mismatch: ${replies[1].url}`);
+  console.assert(replies[1].type === "image", "Step 1b Failed: 2nd message should be image");
+  console.assert(replies[1].url.includes("programme_poster.jpg"), `Step 1b Failed: Image URL mismatch: ${replies[1].url}`);
   console.log(`✅ Step 1b: Sprout Kairos poster delivered: ${replies[1].url}`);
 
   // 1c: Consent button
-  console.assert(replies[2].type === "button", "Step 1 Failed: 3rd message should be button prompt");
-  console.assert(replies[2].body === "Suivez gratuitement le cours d'introduction et lancez votre parcours vers la réussite en affaires.", `Step 1 Failed: Consent question mismatch: ${replies[2].body}`);
-  console.assert(replies[2].buttons.length === 1, `Step 1 Failed: Expected only 1 button, got ${replies[2].buttons.length}`);
-  console.assert(replies[2].buttons[0].title === "J'accepte", "Step 1 Failed: 'J\\'accepte' button missing");
-  console.log(`✅ Step 1c: Consent prompt with ONLY [J'accepte] delivered.\n`);
+  console.assert(replies[2].type === "button", "Step 1b Failed: 3rd message should be button prompt");
+  console.assert(replies[2].body === "Suivez gratuitement le cours d'introduction et lancez votre parcours vers la réussite en affaires.", `Step 1b Failed: Consent question mismatch: ${replies[2].body}`);
+  console.assert(replies[2].buttons.length === 1, `Step 1b Failed: Expected only 1 button, got ${replies[2].buttons.length}`);
+  console.assert(replies[2].buttons[0].title === "J'accepte", "Step 1b Failed: 'J\\'accepte' button missing");
+  console.log(`✅ Step 1b: Consent prompt with ONLY [J'accepte] delivered.\n`);
 
   // --- STEP 2: Client clicks "J'accepte" -> Video arrives ALONE with "Commencer gratuitement" ---
   console.log("--- STEP 2: Client clicks 'J'accepte' ---");

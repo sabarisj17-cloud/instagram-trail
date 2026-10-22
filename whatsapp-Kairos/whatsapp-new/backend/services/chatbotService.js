@@ -42,6 +42,32 @@ function isGreetingOrRestart(clean, buttonId) {
 }
 
 /**
+ * Detect language selection from text or button ID
+ */
+function detectLanguageChoice(clean, buttonId) {
+  if (
+    buttonId === "lang_en" ||
+    clean === "english" ||
+    clean === "en" ||
+    clean === "anglais" ||
+    clean === "1"
+  ) {
+    return "en";
+  }
+  if (
+    buttonId === "lang_fr" ||
+    clean === "french" ||
+    clean === "français" ||
+    clean === "francais" ||
+    clean === "fr" ||
+    clean === "2"
+  ) {
+    return "fr";
+  }
+  return null;
+}
+
+/**
  * Detect looking for selection from text or button ID
  */
 function detectLookingFor(clean, buttonId) {
@@ -241,14 +267,52 @@ function getCourseLessonSequence(courseKey = "choose_1", clipNum = 1, isAudio = 
 }
 
 /**
- * Screen 1: Welcome & Consent (French Flow with Poster Image)
+ * Helper to get active flow configuration based on language ("fr" or "en")
  */
-function getWelcomeSequence() {
-  const posterUrl = resolveMediaUrl(KAIROS_CONFIG.posterImage || "programme_poster.jpg", "programme_poster.jpg");
+function getFlowConfig(language = "fr") {
+  if (language === "en") {
+    return KAIROS_CONFIG.englishFlow || {};
+  }
+  return KAIROS_CONFIG.frenchFlow || {};
+}
+
+/**
+ * Screen 0: Initial Language Selection Sequence
+ */
+function getLanguageSelectionSequence() {
+  const conf = KAIROS_CONFIG.languageSelection || {
+    welcomeMessage: "Welcome to Kairos Lite\nBienvenue sur Kairos Lite",
+    prompt: "Pick your language and discover Kairos Lite!\nChoisissez votre langue et découvrez Kairos Lite !",
+    buttons: [
+      { id: "lang_en", title: "English" },
+      { id: "lang_fr", title: "French" }
+    ]
+  };
+
   return [
     {
       type: "text",
-      text: KAIROS_CONFIG.welcomeMessage
+      text: conf.welcomeMessage
+    },
+    {
+      type: "button",
+      body: conf.prompt,
+      buttons: conf.buttons
+    }
+  ];
+}
+
+/**
+ * Screen 1: Welcome & Consent (with Poster Image based on language)
+ */
+function getWelcomeSequence(language = "fr") {
+  const flow = getFlowConfig(language);
+  const fallbackPoster = language === "en" ? "programme_poster_english.jpg" : "programme_poster.jpg";
+  const posterUrl = resolveMediaUrl(flow.posterImage || fallbackPoster, fallbackPoster);
+  return [
+    {
+      type: "text",
+      text: flow.welcomeMessage
     },
     {
       type: "image",
@@ -256,8 +320,8 @@ function getWelcomeSequence() {
     },
     {
       type: "button",
-      body: KAIROS_CONFIG.consentQuestion,
-      buttons: KAIROS_CONFIG.consentButtons
+      body: flow.consentQuestion,
+      buttons: flow.consentButtons
     }
   ];
 }
@@ -280,16 +344,18 @@ function scheduleSubscriptionPrompt(phone, delaySeconds = 30) {
     const state = getConversationState(phone);
     // Only dispatch if user is still in WATCHING_DEMO_VIDEO state
     if (state.step === "WATCHING_DEMO_VIDEO") {
-      console.log(`[Demo Video Timer Fired] Video playback finished for +${phone}. Sending Accept button.`);
+      const lang = state.collectedData?.language || "fr";
+      console.log(`[Demo Video Timer Fired] Video playback finished for +${phone} (lang: ${lang}). Sending Accept button.`);
       updateConversationState(phone, { step: "AWAITING_SUBSCRIPTION_DECISION" });
-      const conf = KAIROS_CONFIG.demoVideo || {};
+      const flow = getFlowConfig(lang);
+      const conf = flow.demoVideo || {};
       try {
         const whatsappService = require("./whatsappService");
         await whatsappService.sendButtonMessage(
           phone,
-          conf.subscriptionQuestion || "Souhaitez-vous vous inscrire à notre cours ?",
+          conf.subscriptionQuestion || (lang === "en" ? "Would you like to register for our course?" : "Souhaitez-vous vous inscrire à notre cours ?"),
           conf.buttons || [
-            { id: "sub_accept", title: "J'accepte" }
+            { id: "sub_accept", title: lang === "en" ? "I accept" : "J'accepte" }
           ]
         );
       } catch (err) {
@@ -315,14 +381,16 @@ function cancelSubscriptionTimer(phone) {
 /**
  * Demo Video Message (Sent 1st, ALONE)
  */
-function getDemoVideoMessage() {
-  const conf = KAIROS_CONFIG.demoVideo || {};
-  const videoUrl = resolveMediaUrl(conf.filename || "french.mp4", "french.mp4");
+function getDemoVideoMessage(language = "fr") {
+  const flow = getFlowConfig(language);
+  const conf = flow.demoVideo || {};
+  const fallbackVideo = language === "en" ? "kairos_english.mp4" : "french.mp4";
+  const videoUrl = resolveMediaUrl(conf.filename || fallbackVideo, fallbackVideo);
   return [
     {
       type: "video",
       url: videoUrl,
-      caption: conf.caption || "Commencer gratuitement"
+      caption: conf.caption || (language === "en" ? "Start for free" : "Commencer gratuitement")
     }
   ];
 }
@@ -330,14 +398,15 @@ function getDemoVideoMessage() {
 /**
  * Subscription Question & Buttons Message (Sent AFTER video finishes playing)
  */
-function getSubscriptionQuestionMessage() {
-  const conf = KAIROS_CONFIG.demoVideo || {};
+function getSubscriptionQuestionMessage(language = "fr") {
+  const flow = getFlowConfig(language);
+  const conf = flow.demoVideo || {};
   return [
     {
       type: "button",
-      body: conf.subscriptionQuestion || "Souhaitez-vous vous inscrire à notre cours ?",
+      body: conf.subscriptionQuestion || (language === "en" ? "Would you like to register for our course?" : "Souhaitez-vous vous inscrire à notre cours ?"),
       buttons: conf.buttons || [
-        { id: "sub_accept", title: "J'accepte" }
+        { id: "sub_accept", title: language === "en" ? "I accept" : "J'accepte" }
       ]
     }
   ];
@@ -346,14 +415,17 @@ function getSubscriptionQuestionMessage() {
 /**
  * Course Registration Form Message
  */
-function getRegistrationFormMessage() {
-  const conf = KAIROS_CONFIG.demoVideo || {};
+function getRegistrationFormMessage(language = "fr") {
+  const flow = getFlowConfig(language);
+  const conf = flow.demoVideo || {};
   return [
     {
       type: "button",
-      body: conf.registrationPrompt || "Great! Please fill out the registration form to subscribe to our course:\n\n👉 https://reg-feandsme-sprout.web.app/registration\n\nOnce submitted, return here and tap below!",
+      body: conf.registrationPrompt || (language === "en"
+        ? "Great! Please fill out the registration form to enroll in our course:\n\n👉 https://reg-fe-and-sme-sprout.web.app\n\nOnce submitted, return here and tap below!"
+        : "Super ! Veuillez remplir le formulaire d'inscription pour vous inscrire à notre cours :\n\n👉 https://reg-feandsme-sprout.web.app/registration\n\nUne fois soumis, revenez ici et appuyez ci-dessous !"),
       buttons: conf.registrationButtons || [
-        { id: "form_submitted", title: "Submitted ✅" }
+        { id: "form_submitted", title: language === "en" ? "Submitted ✅" : "Soumis ✅" }
       ]
     }
   ];
@@ -362,12 +434,13 @@ function getRegistrationFormMessage() {
 /**
  * Thank You After Form Submission Message
  */
-function getThankYouContactMessage() {
-  const conf = KAIROS_CONFIG.demoVideo || {};
+function getThankYouContactMessage(language = "fr") {
+  const flow = getFlowConfig(language);
+  const conf = flow.demoVideo || {};
   return [
     {
       type: "text",
-      text: conf.thankYouMessage || "Thank you, we will contact you shortly."
+      text: conf.thankYouMessage || (language === "en" ? "Thank you, we will contact you shortly." : "Merci, nous vous contacterons sous peu.")
     }
   ];
 }
@@ -532,8 +605,25 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
   if (isGreetingOrRestart(clean, buttonId)) {
     cancelSubscriptionTimer(phone);
     resetConversationState(phone);
-    updateConversationState(phone, { step: "AWAITING_AGREEMENT" });
-    return getWelcomeSequence();
+    updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
+    return getLanguageSelectionSequence();
+  }
+
+  // 2b. Language Selection Handling (Buttons or Text)
+  const detectedLang = detectLanguageChoice(clean, buttonId);
+  if (
+    buttonId === "lang_en" ||
+    buttonId === "lang_fr" ||
+    (state.step === "AWAITING_LANGUAGE" && detectedLang) ||
+    (state.step === "IDLE" && detectedLang)
+  ) {
+    cancelSubscriptionTimer(phone);
+    const chosenLang = detectedLang || (buttonId === "lang_en" ? "en" : "fr");
+    updateConversationState(phone, {
+      step: "AWAITING_AGREEMENT",
+      collectedData: { ...state.collectedData, language: chosenLang }
+    });
+    return getWelcomeSequence(chosenLang);
   }
 
   // 3. GLOBAL INTERACTIVE BUTTON INTERCEPTOR
@@ -636,35 +726,42 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       clean === "j'accepte" ||
       clean === "accepte" ||
       clean === "accepter" ||
+      clean === "i accept" ||
+      clean === "accept" ||
       clean === "i agree" ||
       clean === "agree" ||
       clean === "oui" ||
+      clean === "yes" ||
       clean === "d'accord"
     ))
   ) {
     cancelSubscriptionTimer(phone);
+    let lang = state.collectedData?.language;
+    if (!lang) {
+      lang = (clean.includes("agree") || (clean.includes("accept") && !clean.includes("j'"))) ? "en" : "fr";
+    }
     updateConversationState(phone, {
       step: "WATCHING_DEMO_VIDEO",
-      collectedData: { ...state.collectedData, agreed: true }
+      collectedData: { ...state.collectedData, agreed: true, language: lang }
     });
     const delaySec = parseInt(process.env.DEMO_VIDEO_DURATION_SECONDS || "30", 10);
     scheduleSubscriptionPrompt(phone, delaySec);
-    return getDemoVideoMessage();
+    return getDemoVideoMessage(lang);
   }
 
   // 3h. More info button
   if (buttonId === "more_info" || clean === "plus d'infos" || clean === "more info" || clean === "info") {
+    const lang = state.collectedData?.language || "fr";
+    const flow = getFlowConfig(lang);
     return [
       {
         type: "text",
-        text: KAIROS_CONFIG.moreInfoText
+        text: flow.moreInfoText
       },
       {
         type: "button",
-        body: KAIROS_CONFIG.consentQuestion,
-        buttons: [
-          { id: "agree", title: "J'accepte" }
-        ]
+        body: flow.consentQuestion,
+        buttons: flow.consentButtons
       }
     ];
   }
@@ -702,15 +799,17 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       clean === "accept" ||
       clean === "accepte" ||
       clean === "j'accepte" ||
+      clean === "i accept" ||
       clean === "accepter" ||
       clean === "oui" ||
       clean === "yes"
     ))
   ) {
     cancelSubscriptionTimer(phone);
+    const lang = state.collectedData?.language || ((clean.includes("j'accepte") || clean === "oui" || clean === "accepte") ? "fr" : "en");
     updateConversationState(phone, {
       step: "AWAITING_FORM_SUBMISSION",
-      collectedData: { ...state.collectedData, subscriptionDecision: "accept" }
+      collectedData: { ...state.collectedData, subscriptionDecision: "accept", language: lang }
     });
     saveLead({
       phone: phone,
@@ -719,7 +818,7 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       appliedOffer: "Course Subscription",
       status: "Interested in Course"
     });
-    return getRegistrationFormMessage();
+    return getRegistrationFormMessage(lang);
   }
 
   // 3l. Subscription Decline
@@ -729,19 +828,22 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
     (state.step === "AWAITING_SUBSCRIPTION_DECISION" && (
       clean === "decline" ||
       clean === "refuser" ||
-      clean === "non"
+      clean === "non" ||
+      clean === "no"
     ))
   ) {
     cancelSubscriptionTimer(phone);
+    const lang = state.collectedData?.language || "fr";
     updateConversationState(phone, {
       step: "DECLINED",
       collectedData: { ...state.collectedData, subscriptionDecision: "decline" }
     });
-    const conf = KAIROS_CONFIG.demoVideo || {};
+    const flow = getFlowConfig(lang);
+    const conf = flow.demoVideo || {};
     return [
       {
         type: "text",
-        text: conf.declineMessage || "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire."
+        text: conf.declineMessage || (lang === "en" ? "Thank you for your time! If you change your mind, type *Hi* at any time to watch the video or register." : "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire.")
       }
     ];
   }
@@ -749,14 +851,19 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
   // 3m. Form Submitted (button or text)
   if (
     buttonId === "form_submitted" ||
-    clean === "form submitted" ||
-    clean === "submitted" ||
-    clean === "soumis" ||
-    clean === "soumis ✅" ||
-    clean === "j'ai soumis" ||
-    clean === "envoyé" ||
-    clean === "c'est fait"
+    (state.step === "AWAITING_FORM_SUBMISSION" && (
+      clean === "form submitted" ||
+      clean === "submitted" ||
+      clean === "submitted ✅" ||
+      clean === "soumis" ||
+      clean === "soumis ✅" ||
+      clean === "j'ai soumis" ||
+      clean === "envoyé" ||
+      clean === "c'est fait" ||
+      clean === "done"
+    ))
   ) {
+    const lang = state.collectedData?.language || "fr";
     updateConversationState(phone, {
       step: "FORM_COMPLETED",
       collectedData: { ...state.collectedData, formCompleted: true }
@@ -768,30 +875,42 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       appliedOffer: "Course Registration Form",
       status: "Form Submitted"
     });
-    return getThankYouContactMessage();
+    return getThankYouContactMessage(lang);
   }
 
   // 4. Conversational State Machine
   switch (state.step) {
     case "IDLE": {
       resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_AGREEMENT" });
-      return getWelcomeSequence();
+      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
+      return getLanguageSelectionSequence();
+    }
+
+    case "AWAITING_LANGUAGE": {
+      const langChoice = detectLanguageChoice(clean, buttonId);
+      if (langChoice) {
+        updateConversationState(phone, {
+          step: "AWAITING_AGREEMENT",
+          collectedData: { ...state.collectedData, language: langChoice }
+        });
+        return getWelcomeSequence(langChoice);
+      }
+      return getLanguageSelectionSequence();
     }
 
     case "AWAITING_AGREEMENT": {
+      const lang = state.collectedData?.language || "fr";
       if (buttonId === "more_info" || clean === "plus d'infos" || clean === "more info" || clean === "info") {
+        const flow = getFlowConfig(lang);
         return [
           {
             type: "text",
-            text: KAIROS_CONFIG.moreInfoText
+            text: flow.moreInfoText
           },
           {
             type: "button",
-            body: KAIROS_CONFIG.consentQuestion,
-            buttons: [
-              { id: "agree", title: "J'accepte" }
-            ]
+            body: flow.consentQuestion,
+            buttons: flow.consentButtons
           }
         ];
       }
@@ -801,6 +920,8 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
         clean === "j'accepte" ||
         clean === "accepte" ||
         clean === "accepter" ||
+        clean === "i accept" ||
+        clean === "accept" ||
         clean === "i agree" ||
         clean === "agree" ||
         clean === "yes" ||
@@ -812,18 +933,19 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
         cancelSubscriptionTimer(phone);
         updateConversationState(phone, {
           step: "WATCHING_DEMO_VIDEO",
-          collectedData: { agreed: true }
+          collectedData: { ...state.collectedData, agreed: true }
         });
         const delaySec = parseInt(process.env.DEMO_VIDEO_DURATION_SECONDS || "30", 10);
         scheduleSubscriptionPrompt(phone, delaySec);
-        return getDemoVideoMessage();
+        return getDemoVideoMessage(lang);
       }
 
+      const flow = getFlowConfig(lang);
       return [
         {
           type: "button",
-          body: KAIROS_CONFIG.consentQuestion,
-          buttons: KAIROS_CONFIG.consentButtons
+          body: flow.consentQuestion,
+          buttons: flow.consentButtons
         }
       ];
     }
@@ -832,16 +954,19 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       // If user sends any message or taps while watching demo video, prompt them immediately
       cancelSubscriptionTimer(phone);
       updateConversationState(phone, { step: "AWAITING_SUBSCRIPTION_DECISION" });
-      return getSubscriptionQuestionMessage();
+      const lang = state.collectedData?.language || "fr";
+      return getSubscriptionQuestionMessage(lang);
     }
 
     case "AWAITING_SUBSCRIPTION_DECISION": {
+      const lang = state.collectedData?.language || "fr";
       if (
         buttonId === "sub_accept" ||
         buttonId === "accept" ||
         clean === "accept" ||
         clean === "accepte" ||
         clean === "j'accepte" ||
+        clean === "i accept" ||
         clean === "accepter" ||
         clean === "yes" ||
         clean === "oui"
@@ -858,29 +983,31 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
           appliedOffer: "Course Subscription",
           status: "Interested in Course"
         });
-        return getRegistrationFormMessage();
+        return getRegistrationFormMessage(lang);
       }
 
-      if (buttonId === "sub_decline" || buttonId === "decline" || clean === "decline" || clean === "refuser" || clean === "non") {
+      if (buttonId === "sub_decline" || buttonId === "decline" || clean === "decline" || clean === "refuser" || clean === "non" || clean === "no") {
         cancelSubscriptionTimer(phone);
         updateConversationState(phone, {
           step: "DECLINED",
           collectedData: { ...state.collectedData, subscriptionDecision: "decline" }
         });
-        const conf = KAIROS_CONFIG.demoVideo || {};
+        const flow = getFlowConfig(lang);
+        const conf = flow.demoVideo || {};
         return [
           {
             type: "text",
-            text: conf.declineMessage || "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire."
+            text: conf.declineMessage || (lang === "en" ? "Thank you for your time! If you change your mind, type *Hi* at any time to watch the video or register." : "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire.")
           }
         ];
       }
 
-      return getSubscriptionQuestionMessage();
+      return getSubscriptionQuestionMessage(lang);
     }
 
     case "AWAITING_FORM_SUBMISSION": {
       // User filled form and returned to WhatsApp
+      const lang = state.collectedData?.language || "fr";
       updateConversationState(phone, {
         step: "FORM_COMPLETED",
         collectedData: { ...state.collectedData, formCompleted: true }
@@ -892,23 +1019,29 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
         appliedOffer: "Course Registration Form",
         status: "Form Submitted"
       });
-      return getThankYouContactMessage();
+      return getThankYouContactMessage(lang);
     }
 
     case "FORM_COMPLETED": {
+      const lang = state.collectedData?.language || "fr";
       return [
         {
           type: "text",
-          text: "Merci, nous vous contacterons sous peu. Écrivez *Bonjour* si vous avez besoin d'autre chose !"
+          text: lang === "en"
+            ? "Thank you, we will contact you shortly. Type *Hi* if you need anything else!"
+            : "Merci, nous vous contacterons sous peu. Écrivez *Bonjour* si vous avez besoin d'autre chose !"
         }
       ];
     }
 
     case "DECLINED": {
+      const lang = state.collectedData?.language || "fr";
       return [
         {
           type: "text",
-          text: "Écrivez *Bonjour* à tout moment pour regarder la vidéo de démonstration ou vous inscrire !"
+          text: lang === "en"
+            ? "Type *Hi* at any time to watch the demo video or register!"
+            : "Écrivez *Bonjour* à tout moment pour regarder la vidéo de démonstration ou vous inscrire !"
         }
       ];
     }
@@ -1387,20 +1520,21 @@ async function processMessage(phone, userMessage = "", buttonId = null, messageI
       }
 
       resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_AGREEMENT" });
-      return getWelcomeSequence();
+      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
+      return getLanguageSelectionSequence();
     }
 
     default: {
       resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_AGREEMENT" });
-      return getWelcomeSequence();
+      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
+      return getLanguageSelectionSequence();
     }
   }
 }
 
 module.exports = {
   processMessage,
+  getLanguageSelectionSequence,
   getWelcomeSequence,
   getLookingForMessage,
   getProfileMessage,

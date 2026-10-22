@@ -8,7 +8,69 @@ const KAIROS_CONFIG = {
   tagline: "I help you find a job, an internship or a course, for free.",
   freeService: true,
   
-  // Screen 1: Welcome & Consent (French)
+  // Screen 0: Initial Language Selection Sequence
+  languageSelection: {
+    welcomeMessage: "Welcome to Kairos Lite\nBienvenue sur Kairos Lite",
+    prompt: "Pick your language and discover Kairos Lite!\nChoisissez votre langue et découvrez Kairos Lite !",
+    buttons: [
+      { id: "lang_en", title: "English" },
+      { id: "lang_fr", title: "French" }
+    ]
+  },
+
+  // French Flow (Screen 1 & Video Flow)
+  frenchFlow: {
+    welcomeMessage: "Bienvenue sur Kairos – Votre professeur préféré.",
+    posterImage: "programme_poster.jpg",
+    consentQuestion: "Suivez gratuitement le cours d'introduction et lancez votre parcours vers la réussite en affaires.",
+    consentButtons: [
+      { id: "agree", title: "J'accepte" }
+    ],
+    moreInfoText: "Kairos Lite vous aide à trouver un emploi, un stage ou une formation, 100% gratuitement.\n\nNous vous posons quelques questions simples afin de vous proposer des offres adaptées à votre profil. Vos données restent strictement confidentielles.",
+    demoVideo: {
+      filename: "french.mp4",
+      caption: "Commencer gratuitement",
+      subscriptionQuestion: "Souhaitez-vous vous inscrire à notre cours ?",
+      buttons: [
+        { id: "sub_accept", title: "J'accepte" }
+      ],
+      registrationLink: "https://reg-feandsme-sprout.web.app/registration",
+      registrationPrompt: "Super ! Veuillez remplir le formulaire d'inscription pour vous inscrire à notre cours :\n\n👉 https://reg-feandsme-sprout.web.app/registration\n\nUne fois soumis, revenez ici et appuyez ci-dessous !",
+      registrationButtons: [
+        { id: "form_submitted", title: "Soumis ✅" }
+      ],
+      thankYouMessage: "Merci, nous vous contacterons sous peu.",
+      declineMessage: "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire."
+    }
+  },
+
+  // English Flow (Screen 1 & Video Flow)
+  englishFlow: {
+    welcomeMessage: "Welcome to Kairos – Your favorite teacher.",
+    posterImage: "programme_poster_english.jpg",
+    consentQuestion: "Take the introductory course for free and start your journey to business success.",
+    consentButtons: [
+      { id: "agree", title: "I accept" }
+    ],
+    moreInfoText: "Kairos Lite helps you access skills, training and business growth tools, 100% free.\n\nYour data remains strictly confidential.",
+    demoVideo: {
+      filename: "kairos_english.mp4",
+      caption: "Start for free",
+      subscriptionQuestion: "Would you like to register for our course?",
+      buttons: [
+        { id: "sub_accept", title: "I accept" }
+      ],
+      registrationLink: "https://reg-fe-and-sme-sprout.web.app",
+      registrationPrompt: "Great! Please fill out the registration form to enroll in our course:\n\n👉 https://reg-fe-and-sme-sprout.web.app\n\nOnce submitted, return here and tap below!",
+      registrationButtons: [
+        { id: "form_submitted", title: "Submitted ✅" }
+      ],
+      thankYouMessage: "Thank you, we will contact you shortly.",
+      declineMessage: "Thank you for your time! If you change your mind, type *Hi* at any time to watch the video or register."
+    }
+  },
+
+  // Backward-compatibility defaults (French)
   welcomeMessage: "Bienvenue sur Kairos – Votre professeur préféré.",
   posterImage: "programme_poster.jpg",
   consentQuestion: "Suivez gratuitement le cours d'introduction et lancez votre parcours vers la réussite en affaires.",
@@ -16,8 +78,6 @@ const KAIROS_CONFIG = {
     { id: "agree", title: "J'accepte" }
   ],
   moreInfoText: "Kairos Lite vous aide à trouver un emploi, un stage ou une formation, 100% gratuitement.\n\nNous vous posons quelques questions simples afin de vous proposer des offres adaptées à votre profil. Vos données restent strictement confidentielles.",
-
-  // Demo Video & Course Subscription Flow (French)
   demoVideo: {
     filename: "french.mp4",
     caption: "Commencer gratuitement",
