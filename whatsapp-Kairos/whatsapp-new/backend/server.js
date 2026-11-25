@@ -212,7 +212,7 @@ app.post("/api/video/complete", async (req, res) => {
   const modId = Math.min(6, Math.max(1, Number(moduleId || payload.moduleId) || 1));
 
   const result = studentProgressService.completeModule(phone, modId);
-  const baseUrl = (process.env.SERVER_BASE_URL || "https://whatsapp-kairos-video.onrender.com").replace(/\/$/, "");
+  const baseUrl = (process.env.SERVER_BASE_URL || "https://instagram-trail.onrender.com").replace(/\/$/, "");
   const rawName = payload.name || "Student";
   const studentName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
@@ -403,7 +403,8 @@ app.listen(PORT, "0.0.0.0", () => {
 
   // Automatic Keep-Awake Heartbeat to prevent Render Free Tier sleep (every 10 minutes)
   const https = require("https");
-  const keepAliveUrl = "https://whatsapp-kairos-video.onrender.com/health";
+  const keepAliveBaseUrl = (process.env.SERVER_BASE_URL || "https://instagram-trail.onrender.com").replace(/\/$/, "");
+  const keepAliveUrl = `${keepAliveBaseUrl}/health`;
   setInterval(() => {
     https.get(keepAliveUrl, (res) => {
       console.log(`[Keep-Alive Ping] Render heartbeat status: ${res.statusCode}`);

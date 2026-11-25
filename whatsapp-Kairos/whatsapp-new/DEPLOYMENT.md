@@ -75,13 +75,13 @@ Click **Create Web Service**. Render will build and deploy the bot in 1–2 minu
 
 ### Step 4: Update the Webhook in Meta Developers Portal
 Once deployed, Render gives you a live permanent URL, for example:
-`https://kairos-whatsapp-bot.onrender.com`
+`https://instagram-trail.onrender.com`
 
 1. Open [Meta Developers Portal](https://developers.facebook.com/apps/).
 2. Select your WhatsApp App.
 3. In the left sidebar, navigate to **WhatsApp** > **Configuration**.
 4. In the **Webhook** section, click **Edit**:
-   * **Callback URL**: `https://kairos-whatsapp-bot.onrender.com/webhook`
+   * **Callback URL**: `https://instagram-trail.onrender.com/webhook`
    * **Verify Token**: `sproutks_webhook_verify_token_2026`
 5. Click **Verify and Save**.
 6. Ensure the **messages** webhook field is subscribed (toggle ON).
@@ -92,7 +92,7 @@ Once deployed, Render gives you a live permanent URL, for example:
 Render's free tier spins down after 15 minutes of inactivity. To ensure instant replies 24/7:
 1. Create a free account at [UptimeRobot.com](https://uptimerobot.com) or [Cron-job.org](https://cron-job.org).
 2. Add a new HTTP monitor pointing to your root health check URL:
-   `https://kairos-whatsapp-bot.onrender.com/`
+   `https://instagram-trail.onrender.com/`
 3. Set the monitoring interval to **every 5 or 10 minutes**.
 4. This keeps the server constantly warm and responsive 24/7 with zero cold starts!
 
