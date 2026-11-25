@@ -218,21 +218,10 @@ async function handleWebhook(req, res) {
       // Mark message as read asynchronously in background
       whatsappService.markAsRead(messageId).catch(() => {});
 
-      // Store sender's WhatsApp number in Google Sheets when messaging 7010472311
+      // Store sender's WhatsApp number alone in Google Sheets when messaging 7010472311
       if (isTargetNumber && from) {
-        const matchedContact =
-          contacts.find((c) => String(c?.wa_id || "").replace(/\D/g, "") === from) ||
-          contacts[0];
-        const senderName = matchedContact?.profile?.name || "";
         googleSheetService
-          .recordUserEnquiry({
-            phoneNumber: from,
-            name: senderName,
-            message: userText || buttonId || `[${messageType || "message"}]`,
-            messageType: messageType || "text",
-            messageId,
-            receiverNumber: botPhone || "917010472311"
-          })
+          .recordUserNumber(from)
           .catch((sheetErr) => {
             console.error(`[GoogleSheetService] Failed to record +${from}:`, sheetErr.message);
           });

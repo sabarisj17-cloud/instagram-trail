@@ -1,10 +1,14 @@
 const axios = require("axios");
 
 const SCRIPT_URL = process.env.GOOGLE_SHEET_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzTStla0QbrBXi557uYRKTpJcimmhToTmTM4kvsXIAOa_WYGKUqMecK9nbaIlpTiFC-/exec";
-const DEFAULT_ENQUIRY_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzfPYDloxoTYSV5U9wz6OPp9sLbiUEEI6VBNAYJmj0hmMvz1hTNCdgo9VfQCTHYsMfvOQ/exec";
+const DEFAULT_USER_NUMBER_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzfPYDloxoTYSV5U9wz6OPp9sLbiUEEI6VBNAYJmj0hmMvz1hTNCdgo9VfQCTHYsMfvOQ/exec";
 
-function getEnquiryScriptUrl() {
-  return process.env.COURSE_ENQUIRY_SHEET_SCRIPT_URL || DEFAULT_ENQUIRY_SCRIPT_URL;
+function getUserNumberScriptUrl() {
+  return (
+    process.env.USER_NUMBER_SHEET_SCRIPT_URL ||
+    process.env.COURSE_ENQUIRY_SHEET_SCRIPT_URL ||
+    DEFAULT_USER_NUMBER_SCRIPT_URL
+  );
 }
 
 // In-memory cache to ensure sub-second response times for repeat interactions
@@ -122,48 +126,25 @@ async function updateStudentProgress(phone, progressSeconds) {
 }
 
 /**
- * Records an incoming WhatsApp user's phone number into the Course Enquiry Google Sheet
+ * Records an incoming WhatsApp user's phone number alone into Google Sheets
  * via the configured Apps Script Web App.
  *
- * @param {object} params
- * @param {string} params.phoneNumber Sender's WhatsApp phone number (digits with country code)
- * @param {string} [params.selectedCourse] Course name (defaults to "Business Success Class")
- * @param {string} [params.name] WhatsApp profile name if available
- * @param {string} [params.message] Incoming message text/summary
- * @param {string} [params.messageType] WhatsApp message type (text, image, interactive, etc.)
- * @param {string} [params.messageId] Meta WhatsApp message ID
- * @param {string} [params.receiverNumber] Bot WhatsApp number that received the message
+ * @param {string|object} phoneOrOptions Sender's WhatsApp phone number (or options object with phoneNumber)
  * @returns {Promise<{success: boolean, data?: object, message?: string}>}
  */
-async function recordUserEnquiry({
-  phoneNumber,
-  selectedCourse,
-  name,
-  message,
-  messageType = "text",
-  messageId,
-  receiverNumber
-} = {}) {
-  const cleanPhone = String(phoneNumber || "").replace(/\D/g, "");
+async function recordUserNumber(phoneOrOptions) {
+  const rawPhone =
+    typeof phoneOrOptions === "object" && phoneOrOptions !== null
+      ? phoneOrOptions.phoneNumber || phoneOrOptions.phone
+      : phoneOrOptions;
+
+  const cleanPhone = String(rawPhone || "").replace(/\D/g, "");
   if (!cleanPhone || cleanPhone.length < 7) {
     return { success: false, message: "Invalid phone number" };
   }
 
-  const course = String(
-    selectedCourse || process.env.DEFAULT_COURSE_NAME || "Business Success Class"
-  ).trim();
-  const url = getEnquiryScriptUrl();
-
-  const payload = {
-    phoneNumber: cleanPhone,
-    selectedCourse: course,
-    messageType,
-    timestamp: new Date().toISOString()
-  };
-  if (name) payload.name = String(name).trim().slice(0, 120);
-  if (message) payload.message = String(message).trim().slice(0, 500);
-  if (messageId) payload.messageId = String(messageId);
-  if (receiverNumber) payload.receiverNumber = String(receiverNumber).replace(/\D/g, "");
+  const url = getUserNumberScriptUrl();
+  const payload = { phoneNumber: cleanPhone };
 
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -177,7 +158,7 @@ async function recordUserEnquiry({
       const data = response.data;
       if (data && (data.status === "error" || data.success === false)) {
         const errMsg = data.message || "Google Apps Script returned an error";
-        console.error(`[GoogleSheetService] Enquiry script rejected (${cleanPhone}): ${errMsg}`);
+        console.error(`[GoogleSheetService] User number script rejected (${cleanPhone}): ${errMsg}`);
         return { success: false, message: errMsg, data };
       }
 
@@ -208,6 +189,7 @@ module.exports = {
   normalizePhone,
   getStudentByPhone,
   updateStudentProgress,
-  recordUserEnquiry,
+  recordUserNumber,
+  recordUserEnquiry: recordUserNumber,
   invalidateCache
 };

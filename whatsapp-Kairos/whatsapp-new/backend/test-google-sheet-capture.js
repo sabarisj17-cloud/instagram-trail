@@ -21,56 +21,38 @@ async function runTests() {
   const postedCalls = [];
 
   try {
-    // Mock outbound network calls so tests never pollute production Google Sheets or send real WhatsApp messages
     axios.post = async (url, data, config) => {
       postedCalls.push({ url, data, config });
-      if (url.includes("AKfycbzfPYDloxoTYSV5U9wz6OPp9sLbiUEEI6VBNAYJmj0hmMvz1hTNCdgo9VfQCTHYsMfvOQ")) {
-        return { status: 200, data: { status: "success", message: "Row added" } };
-      }
-      return { status: 200, data: { success: true } };
+      return { status: 200, data: { status: "success", action: "created" } };
     };
     chatbotService.processMessage = async () => [];
     whatsappService.sendMessageSequence = async () => {};
     whatsappService.markAsRead = async () => {};
 
     // Test 1: Invalid phone rejected
-    const badRes = await googleSheetService.recordUserEnquiry({ phoneNumber: "123" });
+    const badRes = await googleSheetService.recordUserNumber("123");
     assert.strictEqual(badRes.success, false, "Should reject short phone numbers");
     assert.strictEqual(postedCalls.length, 0, "Should not call Apps Script for invalid phone");
     console.log("✅ Test 1 passed: Invalid phone numbers rejected before HTTP call.");
 
-    // Test 2: Valid enquiry sends required phoneNumber & selectedCourse to the new script URL
-    const okRes = await googleSheetService.recordUserEnquiry({
-      phoneNumber: "+91 98765 43210",
-      name: "Test User",
-      message: "Hi",
-      messageType: "text",
-      messageId: "wamid.unit_1",
-      receiverNumber: "917010472311"
-    });
-    assert.strictEqual(okRes.success, true, "Valid enquiry should succeed");
+    // Test 2: Valid phone sends ONLY phoneNumber to the script URL
+    const okRes = await googleSheetService.recordUserNumber("+91 98765 43210");
+    assert.strictEqual(okRes.success, true, "Valid phone number should succeed");
     assert.strictEqual(postedCalls.length, 1);
-    assert.strictEqual(
-      postedCalls[0].url,
-      "https://script.google.com/macros/s/AKfycbzfPYDloxoTYSV5U9wz6OPp9sLbiUEEI6VBNAYJmj0hmMvz1hTNCdgo9VfQCTHYsMfvOQ/exec"
-    );
-    assert.strictEqual(postedCalls[0].data.phoneNumber, "919876543210");
-    assert.strictEqual(postedCalls[0].data.selectedCourse, "Business Success Class");
-    assert.strictEqual(postedCalls[0].data.name, "Test User");
+    assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876543210" });
     assert.strictEqual(postedCalls[0].config.maxRedirects, 5);
-    console.log("✅ Test 2 passed: recordUserEnquiry sends phoneNumber & selectedCourse to new Apps Script.");
+    console.log("✅ Test 2 passed: recordUserNumber sends clean { phoneNumber } payload.");
 
     // Test 3: Retry once on transient network error
     let attemptCount = 0;
-    axios.post = async (url, data) => {
+    axios.post = async () => {
       attemptCount++;
       if (attemptCount === 1) {
-        const err = new Error("ETIMEDOUT");
-        throw err;
+        throw new Error("ETIMEDOUT");
       }
-      return { status: 200, data: { status: "success" } };
+      return { status: 200, data: { status: "success", action: "created" } };
     };
-    const retryRes = await googleSheetService.recordUserEnquiry({ phoneNumber: "919876543211" });
+    const retryRes = await googleSheetService.recordUserNumber("919876543211");
     assert.strictEqual(retryRes.success, true);
     assert.strictEqual(attemptCount, 2, "Should retry once on transient network error");
     console.log("✅ Test 3 passed: Transient network errors retry once.");
@@ -79,26 +61,23 @@ async function runTests() {
     postedCalls.length = 0;
     axios.post = async (url, data, config) => {
       postedCalls.push({ url, data, config });
-      return { status: 200, data: { status: "success" } };
+      return { status: 200, data: { status: "success", action: "created" } };
     };
 
-    const makeRes = () => {
-      const resObj = {
-        statusCode: null,
-        body: null,
-        status(code) {
-          this.statusCode = code;
-          return this;
-        },
-        send(b) {
-          this.body = b;
-          return this;
-        }
-      };
-      return resObj;
-    };
+    const makeRes = () => ({
+      statusCode: null,
+      body: null,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      send(b) {
+        this.body = b;
+        return this;
+      }
+    });
 
-    // Test 4: Webhook text message to 7010472311 stores sender number + profile name
+    // Test 4: Webhook text message to 7010472311 stores sender phone number alone
     const uniqueId1 = "wamid.gs_test_" + Date.now();
     await whatsappController.handleWebhook(
       {
@@ -135,10 +114,8 @@ async function runTests() {
     );
     await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 1, "Webhook text message should trigger sheet save");
-    assert.strictEqual(postedCalls[0].data.phoneNumber, "919876501234");
-    assert.strictEqual(postedCalls[0].data.name, "Arjun");
-    assert.strictEqual(postedCalls[0].data.message, "Hello Kairos");
-    console.log("✅ Test 4 passed: Webhook text message stores sender number and profile name.");
+    assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876501234" });
+    console.log("✅ Test 4 passed: Webhook text message stores sender phone number alone.");
 
     // Test 5: Duplicate messageId is ignored
     await whatsappController.handleWebhook(
@@ -205,8 +182,7 @@ async function runTests() {
     );
     await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 2, "Audio message should still store user number");
-    assert.strictEqual(postedCalls[1].data.phoneNumber, "919123456789");
-    assert.strictEqual(postedCalls[1].data.messageType, "audio");
+    assert.deepStrictEqual(postedCalls[1].data, { phoneNumber: "919123456789" });
     console.log("✅ Test 6 passed: Non-text (audio) message still stores user number.");
 
     // Test 7: Self-message and different business number are NOT stored
