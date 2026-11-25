@@ -68,6 +68,53 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
+// Meta App Review & Publishing Legal Pages
+app.get("/privacy-policy", (req, res) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Privacy Policy - Kairos</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6;color:#222}</style></head>
+<body>
+  <h1>Privacy Policy - Kairos</h1>
+  <p><strong>Effective Date:</strong> November 2026</p>
+  <p>Kairos operates an official WhatsApp Cloud API service on <strong>+91 70104 72311</strong> to provide Business Success Class updates, course access links, and student support.</p>
+  <h2>Information We Collect</h2>
+  <p>When you message our WhatsApp number, we receive your WhatsApp phone number, profile name, and message content solely to respond to your inquiry, verify course enrollment, and track course progress.</p>
+  <h2>How We Use Information</h2>
+  <p>Your phone number and messages are used exclusively to deliver educational content, course notifications, and support responses via WhatsApp. We do not sell or share your personal data with third parties for marketing.</p>
+  <h2>Data Deletion &amp; Contact</h2>
+  <p>You may request deletion of your data at any time by emailing <a href="mailto:sjsabari57@gmail.com">sjsabari57@gmail.com</a> or messaging <strong>+91 70104 72311</strong> on WhatsApp.</p>
+</body>
+</html>`);
+});
+
+app.get("/terms-of-service", (req, res) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Terms of Service - Kairos</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6;color:#222}</style></head>
+<body>
+  <h1>Terms of Service - Kairos</h1>
+  <p>By messaging Kairos on WhatsApp (+91 70104 72311), you agree to receive course-related messages, classroom access links, and support replies.</p>
+  <p>Course classroom links are strictly personal and non-transferable. For assistance, contact <a href="mailto:sjsabari57@gmail.com">sjsabari57@gmail.com</a>.</p>
+</body>
+</html>`);
+});
+
+app.get("/data-deletion", (req, res) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>User Data Deletion - Kairos</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6;color:#222}</style></head>
+<body>
+  <h1>User Data Deletion Instructions - Kairos</h1>
+  <p>To request deletion of your WhatsApp phone number and associated course data from Kairos:</p>
+  <ol>
+    <li>Email <a href="mailto:sjsabari57@gmail.com">sjsabari57@gmail.com</a> with the subject <strong>"Delete My WhatsApp Data"</strong> and include your WhatsApp phone number.</li>
+    <li>Or send <strong>"DELETE MY DATA"</strong> to <strong>+91 70104 72311</strong> on WhatsApp.</li>
+  </ol>
+  <p>We will remove your phone number and records within 48 hours of receiving your request.</p>
+</body>
+</html>`);
+});
+
 // Server status & information endpoint
 app.get("/", (req, res) => {
   res.json({
