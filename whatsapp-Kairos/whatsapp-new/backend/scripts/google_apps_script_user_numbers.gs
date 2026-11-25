@@ -58,12 +58,9 @@ function doPost(e) {
     const formattedPhone = "+" + digits;
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = ss.getSheetByName(SHEET_NAME);
+    let sheet = ss.getSheets()[0] || ss.insertSheet(SHEET_NAME);
 
-    if (!sheet) {
-      sheet = ss.insertSheet(SHEET_NAME);
-      initializeSheetHeaders(sheet);
-    } else if (sheet.getLastRow() === 0) {
+    if (sheet.getLastRow() === 0) {
       initializeSheetHeaders(sheet);
     }
 
