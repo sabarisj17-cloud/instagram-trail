@@ -9,9 +9,9 @@ const DEDUPLICATION_TTL_MS = 30 * 60 * 1000;
 // Conversation session expiry: 45 minutes of inactivity
 const CONVERSATION_TTL_MS = 45 * 60 * 1000;
 
-// Path to persistent processed messages file
-const PROCESSED_MESSAGES_FILE = path.join(__dirname, "..", "data", "processed_messages.json");
+// Path to persistent storage
 const SESSIONS_FILE = path.join(__dirname, "..", "data", "conversation_sessions.json");
+const PROCESSED_MESSAGES_FILE = path.join(__dirname, "..", "data", "processed_messages.json");
 
 // In-memory cache of processed Meta WhatsApp Message IDs
 const processedMessages = new Map();
@@ -25,7 +25,7 @@ function initSessions() {
       if (typeof data === "object" && data !== null) {
         const now = Date.now();
         for (const [phone, sess] of Object.entries(data)) {
-          if (sess && (now - (sess.lastUpdated || 0) < CONVERSATION_TTL_MS)) {
+          if (sess && now - (sess.lastUpdated || 0) < CONVERSATION_TTL_MS) {
             conversationStore.set(phone, sess);
           }
         }
@@ -61,7 +61,7 @@ function initProcessedMessages() {
       if (Array.isArray(data)) {
         const now = Date.now();
         for (const item of data) {
-          if (item && item.id && item.time && (now - item.time < DEDUPLICATION_TTL_MS)) {
+          if (item && item.id && item.time && now - item.time < DEDUPLICATION_TTL_MS) {
             processedMessages.set(item.id, item.time);
           }
         }
@@ -82,7 +82,6 @@ function saveProcessedMessagesToDisk() {
         entries.push({ id, time });
       }
     }
-    // Keep last 1,000 entries max
     const trimmed = entries.slice(-1000);
     fs.writeFileSync(PROCESSED_MESSAGES_FILE, JSON.stringify(trimmed), "utf8");
   } catch (err) {
@@ -90,30 +89,8 @@ function saveProcessedMessagesToDisk() {
   }
 }
 
-
-// Path to persistent leads storage file
-const LEADS_FILE_PATH = path.join(__dirname, "..", "data", "leads.json");
-
 /**
- * Initialize leads file if it doesn't exist
- */
-function ensureLeadsFile() {
-  try {
-    const dir = path.dirname(LEADS_FILE_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    if (!fs.existsSync(LEADS_FILE_PATH)) {
-      fs.writeFileSync(LEADS_FILE_PATH, JSON.stringify([], null, 2), "utf8");
-    }
-  } catch (err) {
-    console.error("[Leads Storage] Error initializing leads file:", err.message);
-  }
-}
-ensureLeadsFile();
-
-/**
- * Check if a WhatsApp message ID has already been processed
+ * Check if a WhatsApp message ID has already been processed (Deduplication)
  */
 function isDuplicateMessage(messageId) {
   if (!messageId) return false;
@@ -136,6 +113,8 @@ function isDuplicateMessage(messageId) {
 
 /**
  * Get the current conversation state for a phone number
+ * @param {string} phone
+ * @returns {object} { step: string, data: object, lastUpdated: number }
  */
 function getConversationState(phone) {
   if (!phone) return null;
@@ -151,19 +130,8 @@ function getConversationState(phone) {
   }
 
   const newSession = {
-    step: "IDLE",
-    collectedData: {
-      agreed: false,
-      lookingFor: null,
-      profile: null,
-      hours: null,
-      workLocation: null,
-      device: null,
-      startDate: null,
-      selectedOffer: "Mobile Money agent",
-      applications: [],
-      name: null
-    },
+    step: "START",
+    data: {},
     lastUpdated: now
   };
   conversationStore.set(phone, newSession);
@@ -172,15 +140,17 @@ function getConversationState(phone) {
 
 /**
  * Update conversation state for a phone number
+ * @param {string} phone
+ * @param {object} updates e.g. { step: "STEP_NAME", data: { name: "John" } }
  */
 function updateConversationState(phone, updates = {}) {
   const current = getConversationState(phone);
   const updated = {
     ...current,
     ...updates,
-    collectedData: {
-      ...current.collectedData,
-      ...(updates.collectedData || {})
+    data: {
+      ...(current.data || {}),
+      ...(updates.data || {})
     },
     lastUpdated: Date.now()
   };
@@ -190,25 +160,12 @@ function updateConversationState(phone, updates = {}) {
 }
 
 /**
- * Reset conversation state for a phone number back to IDLE
+ * Reset conversation state for a phone number back to START
  */
 function resetConversationState(phone) {
-  const current = getConversationState(phone);
-  const existingApplications = current?.collectedData?.applications || [];
   const newSession = {
-    step: "IDLE",
-    collectedData: {
-      agreed: false,
-      lookingFor: null,
-      profile: null,
-      hours: null,
-      workLocation: null,
-      device: null,
-      startDate: null,
-      selectedOffer: "Mobile Money agent",
-      applications: existingApplications,
-      name: null
-    },
+    step: "START",
+    data: {},
     lastUpdated: Date.now()
   };
   conversationStore.set(phone, newSession);
@@ -217,52 +174,15 @@ function resetConversationState(phone) {
 }
 
 /**
- * Save collected lead / application for Kairos Lite
+ * Clear all sessions from memory and disk
  */
-function saveLead(leadData) {
+function clearAllSessions() {
+  conversationStore.clear();
   try {
-    ensureLeadsFile();
-    const existingRaw = fs.readFileSync(LEADS_FILE_PATH, "utf8");
-    const leads = JSON.parse(existingRaw || "[]");
-
-    const newLead = {
-      id: "KAIROS_" + Date.now(),
-      timestamp: new Date().toISOString(),
-      phone: leadData.phone,
-      name: leadData.name || "Candidate",
-      lookingFor: leadData.lookingFor || "A job",
-      profile: leadData.profile || "Candidate",
-      hours: leadData.hours || "Flexible",
-      workLocation: leadData.workLocation || "From home",
-      device: leadData.device || "Smartphone",
-      startDate: leadData.startDate || "Immediately",
-      appliedOffer: leadData.appliedOffer || "Mobile Money agent",
-      service: "Kairos Lite Free Matching",
-      status: "APPLIED"
-    };
-
-    leads.push(newLead);
-    fs.writeFileSync(LEADS_FILE_PATH, JSON.stringify(leads, null, 2), "utf8");
-    console.log(`[Kairos Application Saved] Candidate: ${leadData.phone} | Offer: ${newLead.appliedOffer} | Profile: ${newLead.profile}`);
-    return newLead;
-  } catch (err) {
-    console.error("[Leads Storage] Failed to save lead:", err.message);
-    return null;
-  }
-}
-
-/**
- * Get saved applications for a candidate
- */
-function getCandidateApplications(phone) {
-  try {
-    ensureLeadsFile();
-    const existingRaw = fs.readFileSync(LEADS_FILE_PATH, "utf8");
-    const leads = JSON.parse(existingRaw || "[]");
-    return leads.filter(l => l.phone === phone);
-  } catch (err) {
-    return [];
-  }
+    if (fs.existsSync(SESSIONS_FILE)) {
+      fs.writeFileSync(SESSIONS_FILE, JSON.stringify({}), "utf8");
+    }
+  } catch (err) {}
 }
 
 module.exports = {
@@ -270,6 +190,5 @@ module.exports = {
   getConversationState,
   updateConversationState,
   resetConversationState,
-  saveLead,
-  getCandidateApplications
+  clearAllSessions
 };

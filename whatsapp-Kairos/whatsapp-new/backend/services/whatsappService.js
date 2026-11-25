@@ -6,10 +6,13 @@ const axios = require("axios");
  */
 class WhatsAppService {
   constructor() {
-    this.token = process.env.WHATSAPP_ACCESS_TOKEN || "EAA0GZCHnfff0BSiHkuuboCgbQ056pYYar2B0GgZA1TOjp4pqaN7Q0cROGABgJSedcEKw0VDOSBB9nxCxI9sAGU9xEnr2ooo7edCi3HM6iWRPivv8SUuVpVOitTPe18okFJeTfcwIQnPglXidbssoSu8JJg3yVZBLCo8mSl9hY3N6YXtZAlJt63u09ZCZC24ZC7xDgZDZD";
-    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || "1393037967216637";
-    this.graphApiVersion = process.env.GRAPH_API_VERSION || "v26.0";
-    this.baseUrl = `https://graph.facebook.com/${this.graphApiVersion}/${this.phoneNumberId}`;
+    // Dynamic getters ensure runtime updates to process.env are always used
+  }
+
+  getBaseUrl() {
+    const graphApiVersion = process.env.GRAPH_API_VERSION || "v26.0";
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || "1373840235818636";
+    return `https://graph.facebook.com/${graphApiVersion}/${phoneNumberId}`;
   }
 
   /**
@@ -23,9 +26,11 @@ class WhatsAppService {
    * Authorization headers for Meta Graph API
    */
   getHeaders() {
-    const token = process.env.WHATSAPP_ACCESS_TOKEN || this.token;
-    if (!token || token === "your_token_here") {
-      console.warn("[WhatsApp Service Warning] WHATSAPP_ACCESS_TOKEN is missing or placeholder!");
+    const token =
+      process.env.WHATSAPP_ACCESS_TOKEN ||
+      "EAAPsDL5wjWIBSyLWUOd30q8oLPPVwoUivhnwMSuzjRa1F4DQPgNPMD0ITjNKd2ls2LSEPUKPmjzqbpHfyP5uYD4e3JlDQ4xdfNNIQOy27IhYWi1AEekYWCywMm5xwvunGTFd1lRLAxcHUPZCLOlCyJViyaJ81s0yfxvoctwAJ2T9vwUZBUNRC0RuzT0gWZA7QZDZD";
+    if (!token || token === "YOUR_SYSTEM_USER_ACCESS_TOKEN") {
+      console.warn("[WhatsApp Service Warning] WHATSAPP_ACCESS_TOKEN is missing or not configured in .env!");
     }
     return {
       "Authorization": `Bearer ${token}`,
@@ -37,7 +42,7 @@ class WhatsAppService {
    * Central API caller with error handling
    */
   async executeSend(payload) {
-    const url = `${this.baseUrl}/messages`;
+    const url = `${this.getBaseUrl()}/messages`;
     try {
       const response = await axios.post(url, payload, {
         headers: this.getHeaders(),
@@ -71,14 +76,56 @@ class WhatsAppService {
       return null;
     }
     const cleanTo = this.cleanPhone(to);
+    const hasUrl = /https?:\/\//i.test(text);
     const payload = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: cleanTo,
       type: "text",
       text: {
-        preview_url: false,
+        preview_url: hasUrl,
         body: text
+      }
+    };
+    return this.executeSend(payload);
+  }
+
+  /**
+   * Send a Meta pre-approved message template (works 24/7 even outside the 24-hour window)
+   * 
+   * @param {string} to WhatsApp phone number
+   * @param {string} templateName Name of template registered in Meta (e.g. "kairos_study_greeting")
+   * @param {string[]} [parameters] Array of variable values for {{1}}, {{2}}, etc.
+   * @param {string} [languageCode] Template language code (default: "en_US")
+   */
+  async sendTemplateMessage(to, templateName, parameters = [], languageCode = "en_US") {
+    if (!to || !templateName) {
+      console.error("[WhatsApp Service] Missing recipient phone or template name.");
+      return null;
+    }
+    const cleanTo = this.cleanPhone(to);
+    const bodyParameters = (parameters || []).map((val) => ({
+      type: "text",
+      text: String(val)
+    }));
+
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: cleanTo,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        components:
+          bodyParameters.length > 0
+            ? [
+                {
+                  type: "body",
+                  parameters: bodyParameters
+                }
+              ]
+            : undefined
       }
     };
     return this.executeSend(payload);
@@ -193,6 +240,62 @@ class WhatsAppService {
       },
       action: {
         buttons: formattedButtons
+      }
+    };
+
+    if (headerText) {
+      interactivePayload.header = {
+        type: "text",
+        text: headerText
+      };
+    }
+
+    if (footerText) {
+      interactivePayload.footer = {
+        text: footerText
+      };
+    }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: cleanTo,
+      type: "interactive",
+      interactive: interactivePayload
+    };
+
+    return this.executeSend(payload);
+  }
+
+  /**
+   * Send an Interactive Call-To-Action URL Button Message
+   * Renders a native button directly in WhatsApp that opens a link with 1 tap
+   * 
+   * @param {string} to WhatsApp phone number
+   * @param {string} bodyText Main message body text
+   * @param {string} buttonText Label on the button (max 20 chars, e.g. "▶️ Play Video")
+   * @param {string} url The HTTPS URL to open
+   * @param {string} [headerText] Optional header text
+   * @param {string} [footerText] Optional footer text
+   */
+  async sendCtaUrlMessage(to, bodyText, buttonText, url, headerText = null, footerText = null) {
+    if (!to || !bodyText || !buttonText || !url) {
+      console.error("[WhatsApp Service] Missing parameters for CTA URL message.");
+      return null;
+    }
+
+    const cleanTo = this.cleanPhone(to);
+    const interactivePayload = {
+      type: "cta_url",
+      body: {
+        text: bodyText
+      },
+      action: {
+        name: "cta_url",
+        parameters: {
+          display_text: String(buttonText).slice(0, 20),
+          url: url
+        }
       }
     };
 
@@ -347,6 +450,8 @@ class WhatsAppService {
         await this.sendListMessage(to, msg.body, msg.buttonTitle || "Select Option", msg.sections, msg.header, msg.footer);
       } else if (msg.type === "interactive") {
         await this.sendInteractive(to, msg.body, msg.options, msg.buttonTitle, msg.header, msg.footer);
+      } else if (msg.type === "cta_url") {
+        await this.sendCtaUrlMessage(to, msg.body, msg.buttonText, msg.url, msg.header, msg.footer);
       }
     }
   }
@@ -359,7 +464,7 @@ class WhatsAppService {
   async markAsRead(messageId) {
     if (!messageId) return;
 
-    const url = `${this.baseUrl}/messages`;
+    const url = `${this.getBaseUrl()}/messages`;
     const payload = {
       messaging_product: "whatsapp",
       status: "read",
@@ -375,6 +480,73 @@ class WhatsAppService {
       // Non-critical, ignore
     }
   }
+
+  /**
+   * Send WhatsApp text message via Meta Cloud API
+   * Alias method adhering to requirement 4
+   * 
+   * @param {string} to Recipient WhatsApp phone number
+   * @param {string} message Text message body
+   */
+  async sendWhatsAppMessage(to, message) {
+    return sendWhatsAppMessage(to, message);
+  }
 }
 
-module.exports = new WhatsAppService();
+/**
+ * Standalone reusable function for sending WhatsApp Cloud API messages
+ * POST https://graph.facebook.com/v26.0/1373840235818636/messages
+ * Reads token from process.env.WHATSAPP_ACCESS_TOKEN with safe fallback.
+ * 
+ * @param {string} to Recipient phone number
+ * @param {string} message Text message body
+ */
+async function sendWhatsAppMessage(to, message) {
+  const token =
+    process.env.WHATSAPP_ACCESS_TOKEN ||
+    "EAAPsDL5wjWIBSyLWUOd30q8oLPPVwoUivhnwMSuzjRa1F4DQPgNPMD0ITjNKd2ls2LSEPUKPmjzqbpHfyP5uYD4e3JlDQ4xdfNNIQOy27IhYWi1AEekYWCywMm5xwvunGTFd1lRLAxcHUPZCLOlCyJViyaJ81s0yfxvoctwAJ2T9vwUZBUNRC0RuzT0gWZA7QZDZD";
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || "1373840235818636";
+  const apiVersion = process.env.GRAPH_API_VERSION || "v26.0";
+  const cleanTo = String(to || "").replace(/\D/g, "");
+
+  if (!token || token === "YOUR_SYSTEM_USER_ACCESS_TOKEN") {
+    console.warn("[WhatsApp Service Warning] WHATSAPP_ACCESS_TOKEN is missing or not configured in .env!");
+  }
+
+  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to: cleanTo,
+    type: "text",
+    text: {
+      body: String(message || "")
+    }
+  };
+
+  try {
+    const response = await axios.post(url, payload, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 15000
+    });
+    const msgId = response.data?.messages?.[0]?.id || "OK";
+    console.log(`[WhatsApp Outbound Success] Sent message to ${cleanTo} (ID: ${msgId})`);
+    return response.data;
+  } catch (error) {
+    const status = error.response ? error.response.status : "NETWORK_ERROR";
+    const errorData = error.response?.data?.error || {};
+    const errorMessage = errorData.message || error.message;
+    console.error(`[WhatsApp API Error] Status: ${status} | Code: ${errorData.code || "N/A"} | Error: ${errorMessage}`);
+    return null;
+  }
+}
+
+const serviceInstance = new WhatsAppService();
+serviceInstance.sendWhatsAppMessage = sendWhatsAppMessage;
+
+module.exports = serviceInstance;
+module.exports.sendWhatsAppMessage = sendWhatsAppMessage;
+module.exports.WhatsAppService = WhatsAppService;
+

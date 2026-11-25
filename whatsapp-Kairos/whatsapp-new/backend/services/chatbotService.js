@@ -1,1544 +1,333 @@
-const fs = require("fs");
-const path = require("path");
-const { KAIROS_CONFIG, JOB_CATALOG } = require("../data/kairosData");
-const aiService = require("./aiService");
+/**
+ * Chatbot Service - SproutKs Student Course & DRM Video Flow
+ * 
+ * Features:
+ * 1. Analyzes incoming phone number against Google Sheet student database.
+ * 2. Personalized greeting with registered course (Python, Java, etc.).
+ * 3. Exact video resume timestamp synced directly with Google Sheets.
+ * 4. Senior Developer DRM Protection:
+ *    - Tokenized secure Web Player (nodownload, no contextmenu, no devtools).
+ *    - Dynamic moving watermark with student name & phone to prevent screen recording / leaks.
+ *    - Auto-syncs watched seconds back to Google Sheets every 5 seconds.
+ */
+
+const googleSheetService = require("./googleSheetService");
+const studentProgressService = require("./studentProgressService");
+const { createPlayerToken, createShortSession } = require("../utils/playerToken");
 const {
   getConversationState,
   updateConversationState,
-  resetConversationState,
-  saveLead,
-  getCandidateApplications
+  resetConversationState
 } = require("../utils/conversationState");
 
 /**
- * Clean incoming user text
+ * Format seconds into MM:SS or HH:MM:SS
  */
-function cleanText(text) {
-  return (text || "").trim().toLowerCase();
-}
+function formatDuration(seconds) {
+  const s = Math.floor(Number(seconds) || 0);
+  if (s <= 0) return "00:00 (Not started)";
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
 
-/**
- * Detect if the message is a greeting or restart command
- */
-function isGreetingOrRestart(clean, buttonId) {
-  if (buttonId === "restart" || buttonId === "start") return true;
-  const triggers = [
-    "hi",
-    "hello",
-    "hey",
-    "start",
-    "restart",
-    "menu",
-    "kairos",
-    "bonjour",
-    "salut",
-    "bonsoir",
-    "commencer",
-    "recommencer",
-    "vanakkam",
-    "namaste"
-  ];
-  return triggers.includes(clean);
-}
-
-/**
- * Detect language selection from text or button ID
- */
-function detectLanguageChoice(clean, buttonId) {
-  if (
-    buttonId === "lang_en" ||
-    clean === "english" ||
-    clean === "en" ||
-    clean === "anglais" ||
-    clean === "1"
-  ) {
-    return "en";
+  if (hrs > 0) {
+    return `${hrs}h ${mins}m ${secs}s`;
   }
-  if (
-    buttonId === "lang_fr" ||
-    clean === "french" ||
-    clean === "français" ||
-    clean === "francais" ||
-    clean === "fr" ||
-    clean === "2"
-  ) {
-    return "fr";
-  }
-  return null;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 /**
- * Detect looking for selection from text or button ID
+ * Capitalize string
  */
-function detectLookingFor(clean, buttonId) {
-  if (buttonId === "opt_job") return "A job";
-  if (buttonId === "opt_internship") return "An internship";
-  if (buttonId === "opt_course") return "A course";
-
-  if (clean === "a job" || clean === "job" || clean === "jobs" || clean === "1") {
-    return "A job";
-  }
-  if (clean === "an internship" || clean === "internship" || clean === "intern" || clean === "2") {
-    return "An internship";
-  }
-  if (clean === "a course" || clean === "course" || clean === "courses" || clean === "training" || clean === "3") {
-    return "A course";
-  }
-
-  return null;
+function capitalize(str) {
+  if (!str) return "";
+  return String(str).charAt(0).toUpperCase() + String(str).slice(1);
 }
 
 /**
- * Detect profile selection from text or button ID
+ * Validates if student paymentStatus in Google Sheets is completed
  */
-function detectProfile(clean, buttonId) {
-  if (buttonId === "profile_student") return "A student";
-  if (buttonId === "profile_housewife") return "A housewife";
-  if (buttonId === "profile_young_woman") return "A young woman";
-  if (buttonId === "profile_professional") return "A working professional";
-  if (buttonId === "profile_job_seeker") return "A job seeker";
-
-  if (clean === "a student" || clean === "student" || clean === "college student" || clean === "1") {
-    return "A student";
-  }
-  if (clean === "a housewife" || clean === "housewife" || clean === "homemaker" || clean === "2") {
-    return "A housewife";
-  }
-  if (clean === "a young woman" || clean === "young woman" || clean === "woman" || clean === "3") {
-    return "A young woman";
-  }
-  if (clean.includes("professional") || clean.includes("working") || clean === "4") {
-    return "A working professional";
-  }
-  if (clean.includes("seeker") || clean.includes("job seeker") || clean === "5") {
-    return "A job seeker";
-  }
-
-  return null;
+function isPaymentCompleted(status) {
+  if (status === undefined || status === null) return false;
+  const s = String(status).trim().toLowerCase();
+  return (
+    s === "yes" ||
+    s === "y" ||
+    s === "paid" ||
+    s === "true" ||
+    s === "1" ||
+    s === "completed" ||
+    s.startsWith("y") ||
+    s.includes("paid")
+  );
 }
 
 /**
- * Detect course field selection from text or button ID
+ * Main processMessage handler called by webhook controller
+ *
+ * @param {string} phone Sender's phone number without symbols (e.g. "919500406150")
+ * @param {string} userMessage Text sent by the user
+ * @param {string|null} buttonId ID of button or list item clicked
+ * @param {string} messageId WhatsApp incoming message ID
+ * @returns {Promise<Array<object>>} Sequence of messages to send to WhatsApp
  */
-function detectCourseField(clean, buttonId) {
-  if (buttonId === "field_business" || clean.includes("business") || clean.includes("sales") || clean === "1") {
-    return "Business and sales";
-  }
-  if (buttonId === "field_sewing" || clean.includes("sewing") || clean.includes("fashion") || clean === "2") {
-    return "Sewing and fashion";
-  }
-  if (buttonId === "field_digital" || clean.includes("digital") || clean.includes("skills") || clean === "3") {
-    return "Digital skills";
-  }
-  if (buttonId === "field_food" || clean.includes("food") || clean.includes("catering") || clean === "4") {
-    return "Food and catering";
-  }
-  if (buttonId === "field_small_biz" || clean.includes("small") || clean.includes("management") || clean === "5") {
-    return "Small business management";
-  }
-  return "Business and sales";
-}
+async function processMessage(phone, userMessage = "", buttonId = null, messageId = null) {
+  const text = (userMessage || "").trim().toLowerCase();
+  const rawBtn = buttonId || "";
 
-/**
- * Detect course choice (Choose 1, Choose 2, Choose 3)
- */
-function detectCourseSelection(clean, buttonId) {
-  if (buttonId === "choose_1" || clean.includes("selling") || clean.includes("online") || clean === "1" || clean === "choose 1") {
-    return "choose_1";
-  }
-  if (buttonId === "choose_2" || clean.includes("shop") || clean.includes("small shop") || clean === "2" || clean === "choose 2") {
-    return "choose_2";
-  }
-  if (buttonId === "choose_3" || clean.includes("excel") || clean.includes("basic excel") || clean === "3" || clean === "choose 3") {
-    return "choose_3";
-  }
-  return "choose_1";
-}
+  console.log(`[Chatbot] Incoming message from +${phone} | Text: "${userMessage}" | ButtonID: "${rawBtn}"`);
 
-/**
- * Course Screen 1: Field Selection
- */
-function getCourseFieldsMessage() {
-  return [
-    {
-      type: "button",
-      body: KAIROS_CONFIG.courseFlow.fieldQuestion,
-      buttons: KAIROS_CONFIG.courseFlow.fieldButtonsPart1
-    },
-    {
-      type: "button",
-      body: "More fields:",
-      buttons: KAIROS_CONFIG.courseFlow.fieldButtonsPart2
-    }
-  ];
-}
+  // 1. Query Google Sheets for Student Profile
+  const sheetResult = await googleSheetService.getStudentByPhone(phone);
 
-/**
- * Course Screen 2: Courses List
- */
-function getCourseListMessage() {
-  return [
-    {
-      type: "button",
-      body: KAIROS_CONFIG.courseFlow.coursesIntro,
-      buttons: KAIROS_CONFIG.courseFlow.courseButtons
-    }
-  ];
-}
-
-/**
- * Resolve direct video or audio URL
- */
-function resolveMediaUrl(url, fallbackFilename = "french.mp4") {
-  const serverBase = process.env.RENDER_EXTERNAL_URL || process.env.SERVER_BASE_URL || "https://kairos-1ec3.onrender.com";
-  
-  if (url) {
-    const filename = path.basename(url);
-    const localPath = path.join(__dirname, "..", "public", "media", filename);
-    if (fs.existsSync(localPath)) {
-      return `${serverBase}/media/${filename}`;
-    }
-    if (url.startsWith("https://") && !url.includes("kairos-lite.org")) {
-      return url;
-    }
-  }
-
-  return `${serverBase}/media/${fallbackFilename}`;
-}
-
-/**
- * Course Screen 3: Lessons & Video/Audio Clips
- */
-function getCourseLessonSequence(courseKey = "choose_1", clipNum = 1, isAudio = false) {
-  const catalog = KAIROS_CONFIG.courseFlow.courseCatalog;
-  const course = catalog[courseKey] || catalog.choose_1;
-  const clip = course.clips.find(c => c.clipNumber === clipNum) || course.clips[0];
-
-  const messages = [];
-
-  // If clip 1 and video mode, prepend the selection announcement
-  if (clipNum === 1 && !isAudio) {
-    messages.push({
-      type: "text",
-      text: course.intro
-    });
-  }
-
-  const isLastClip = clipNum >= course.clips.length;
-  const nextClipId = isLastClip ? "course_done" : `next_clip_${clipNum + 1}`;
-  const nextClipTitle = isLastClip ? "Finish course" : "Next clip";
-
-  if (isAudio) {
-    // 1. Native WhatsApp playable audio message
-    messages.push({
-      type: "audio",
-      url: resolveMediaUrl(clip.audioUrl, "sample_audio.mp3")
-    });
-
-    // 2. Buttons directly under audio
-    messages.push({
-      type: "button",
-      body: `🎧 *${clip.label}* (Audio-only version)`,
-      buttons: [
-        { id: nextClipId, title: nextClipTitle },
-        { id: `video_clip_${clipNum}`, title: "Video version" }
-      ]
-    });
-  } else {
-    // 1. Native WhatsApp playable video message (Plays directly in WhatsApp, NO link shown)
-    messages.push({
-      type: "video",
-      url: resolveMediaUrl(clip.url, "kairos_lesson.mp4"),
-      caption: `*${clip.label}*\n${clip.duration}`
-    });
-
-    // 2. Action buttons directly under video
-    messages.push({
-      type: "button",
-      body: "Choose an option to continue:",
-      buttons: [
-        { id: nextClipId, title: nextClipTitle },
-        { id: `audio_clip_${clipNum}`, title: "Audio-only version" }
-      ]
-    });
-  }
-
-  return messages;
-}
-
-/**
- * Helper to get active flow configuration based on language ("fr" or "en")
- */
-function getFlowConfig(language = "fr") {
-  if (language === "en") {
-    return KAIROS_CONFIG.englishFlow || {};
-  }
-  return KAIROS_CONFIG.frenchFlow || {};
-}
-
-/**
- * Screen 0: Initial Language Selection Sequence
- */
-function getLanguageSelectionSequence() {
-  const conf = KAIROS_CONFIG.languageSelection || {
-    welcomeMessage: "Welcome to Kairos\nBienvenue sur Kairos",
-    prompt: "Pick your language\nChoisissez votre langue",
-    buttons: [
-      { id: "lang_en", title: "English" },
-      { id: "lang_fr", title: "Français" }
-    ]
-  };
-
-  return [
-    {
-      type: "text",
-      text: conf.welcomeMessage
-    },
-    {
-      type: "button",
-      body: conf.prompt,
-      buttons: conf.buttons
-    }
-  ];
-}
-
-/**
- * Screen 1: Welcome & Consent (with Poster Image based on language)
- */
-function getWelcomeSequence(language = "fr") {
-  const flow = getFlowConfig(language);
-  const fallbackPoster = language === "en" ? "programme_poster_english.jpg" : "programme_poster.jpg";
-  const posterUrl = resolveMediaUrl(flow.posterImage || fallbackPoster, fallbackPoster);
-  return [
-    {
-      type: "text",
-      text: flow.welcomeMessage
-    },
-    {
-      type: "image",
-      url: posterUrl
-    },
-    {
-      type: "button",
-      body: flow.consentQuestion,
-      buttons: flow.consentButtons
-    }
-  ];
-}
-
-// Active background timers for delayed subscription prompt after video playback
-const activeVideoTimers = new Map();
-
-/**
- * Schedule automated subscription prompt after demo video finishes playing
- */
-function scheduleSubscriptionPrompt(phone, delaySeconds = 30) {
-  if (activeVideoTimers.has(phone)) {
-    clearTimeout(activeVideoTimers.get(phone));
-  }
-
-  console.log(`[Demo Video Timer] Scheduled subscription prompt for +${phone} in ${delaySeconds}s (video playback duration)`);
-
-  const timer = setTimeout(async () => {
-    activeVideoTimers.delete(phone);
-    const state = getConversationState(phone);
-    // Only dispatch if user is still in WATCHING_DEMO_VIDEO state
-    if (state.step === "WATCHING_DEMO_VIDEO") {
-      const lang = state.collectedData?.language || "fr";
-      console.log(`[Demo Video Timer Fired] Video playback finished for +${phone} (lang: ${lang}). Sending Accept button.`);
-      updateConversationState(phone, { step: "AWAITING_SUBSCRIPTION_DECISION" });
-      const flow = getFlowConfig(lang);
-      const conf = flow.demoVideo || {};
-      try {
-        const whatsappService = require("./whatsappService");
-        await whatsappService.sendButtonMessage(
-          phone,
-          conf.subscriptionQuestion || (lang === "en" ? "Would you like to register for our course?" : "Souhaitez-vous vous inscrire à notre cours ?"),
-          conf.buttons || [
-            { id: "sub_accept", title: lang === "en" ? "I accept" : "J'accepte" }
-          ]
-        );
-      } catch (err) {
-        console.error("[Subscription Prompt Timer Error]", err.message);
-      }
-    }
-  }, Math.max(delaySeconds, 1) * 1000);
-
-  activeVideoTimers.set(phone, timer);
-}
-
-/**
- * Cancel active video timer if user responds earlier or restarts
- */
-function cancelSubscriptionTimer(phone) {
-  if (activeVideoTimers.has(phone)) {
-    clearTimeout(activeVideoTimers.get(phone));
-    activeVideoTimers.delete(phone);
-    console.log(`[Demo Video Timer Cancelled] Timer cleared for +${phone}`);
-  }
-}
-
-/**
- * Demo Video Message (Sent 1st, ALONE)
- */
-function getDemoVideoMessage(language = "fr") {
-  const flow = getFlowConfig(language);
-  const conf = flow.demoVideo || {};
-  const fallbackVideo = language === "en" ? "kairos_english.mp4" : "french.mp4";
-  const videoUrl = resolveMediaUrl(conf.filename || fallbackVideo, fallbackVideo);
-  return [
-    {
-      type: "video",
-      url: videoUrl,
-      caption: conf.caption || (language === "en" ? "Start for free" : "Commencer gratuitement")
-    }
-  ];
-}
-
-/**
- * Subscription Question & Buttons Message (Sent AFTER video finishes playing)
- */
-function getSubscriptionQuestionMessage(language = "fr") {
-  const flow = getFlowConfig(language);
-  const conf = flow.demoVideo || {};
-  return [
-    {
-      type: "button",
-      body: conf.subscriptionQuestion || (language === "en" ? "Would you like to register for our course?" : "Souhaitez-vous vous inscrire à notre cours ?"),
-      buttons: conf.buttons || [
-        { id: "sub_accept", title: language === "en" ? "I accept" : "J'accepte" }
-      ]
-    }
-  ];
-}
-
-/**
- * Course Registration Form Message
- */
-function getRegistrationFormMessage(language = "fr") {
-  const flow = getFlowConfig(language);
-  const conf = flow.demoVideo || {};
-  return [
-    {
-      type: "button",
-      body: conf.registrationPrompt || (language === "en"
-        ? "Great! Please fill out the registration form to enroll in our course:\n\n👉 https://reg-fe-and-sme-sprout.web.app\n\nOnce submitted, return here and tap below!"
-        : "Super ! Veuillez remplir le formulaire d'inscription pour vous inscrire à notre cours :\n\n👉 https://reg-feandsme-sprout.web.app/registration\n\nUne fois soumis, revenez ici et appuyez ci-dessous !"),
-      buttons: conf.registrationButtons || [
-        { id: "form_submitted", title: language === "en" ? "Submitted ✅" : "Soumis ✅" }
-      ]
-    }
-  ];
-}
-
-/**
- * Thank You After Form Submission Message
- */
-function getThankYouContactMessage(language = "fr") {
-  const flow = getFlowConfig(language);
-  const conf = flow.demoVideo || {};
-  return [
-    {
-      type: "text",
-      text: conf.thankYouMessage || (language === "en" ? "Thank you, we will contact you shortly." : "Merci, nous vous contacterons sous peu.")
-    }
-  ];
-}
-
-/**
- * Screen 2: Looking For (Buttons)
- */
-function getLookingForMessage() {
-  return [
-    {
-      type: "button",
-      body: KAIROS_CONFIG.lookingForQuestion,
-      buttons: KAIROS_CONFIG.lookingForButtons
-    }
-  ];
-}
-
-/**
- * Screen 3: User Profile Buttons
- */
-function getProfileMessage() {
-  return [
-    {
-      type: "button",
-      body: KAIROS_CONFIG.profileQuestion,
-      buttons: KAIROS_CONFIG.profileButtonsPart1
-    },
-    {
-      type: "button",
-      body: "More profile options:",
-      buttons: KAIROS_CONFIG.profileButtonsPart2
-    }
-  ];
-}
-
-/**
- * Screen 4: Question 1/4 (Next-to-Next)
- */
-function getQuestion1Sequence() {
-  const q1 = KAIROS_CONFIG.questions[0];
-  return [
-    {
-      type: "text",
-      text: KAIROS_CONFIG.questionsIntro
-    },
-    {
-      type: "button",
-      body: q1.prompt,
-      buttons: q1.buttons
-    }
-  ];
-}
-
-/**
- * Screen 5: Offers List
- */
-function getOffersListSequence() {
-  return [
-    {
-      type: "text",
-      text: KAIROS_CONFIG.offersIntro
-    },
-    {
-      type: "button",
-      body: KAIROS_CONFIG.offersListBody,
-      buttons: KAIROS_CONFIG.offersButtons
-    }
-  ];
-}
-
-/**
- * Screen 6: Offer Details & Apply
- */
-function getOfferDetailsSequence() {
-  return [
-    {
-      type: "text",
-      text: `${KAIROS_CONFIG.offerDetailsMobileMoney.title}\n${KAIROS_CONFIG.offerDetailsMobileMoney.meta}`
-    },
-    {
-      type: "button",
-      body: KAIROS_CONFIG.offerDetailsMobileMoney.applyPrompt,
-      buttons: KAIROS_CONFIG.offerDetailsMobileMoney.buttons
-    }
-  ];
-}
-
-/**
- * Screen 6 Helper: Handle "Ask Kairos AI" Q&A
- */
-async function handleAskAIResponse(phone, state, text, buttonId) {
-  let query = text;
-  if (buttonId === "ai_eligible") query = "Am I eligible for this role?";
-  if (buttonId === "ai_suitable") query = "Why is this job suitable for me?";
-
-  const selectedOfferName = state.collectedData?.selectedOffer || "Mobile Money agent";
-  const selectedJob = JOB_CATALOG.find(j => j.title.toLowerCase().includes(selectedOfferName.toLowerCase())) || JOB_CATALOG[2];
-
-  const aiResp = await aiService.askKairosAI(state.collectedData || {}, selectedJob, query);
-  if (aiResp && aiResp.messageText && aiResp.buttons?.length > 0) {
+  // CASE 1: Student not found in Google Sheets (Unregistered Visitor)
+  if (!sheetResult.success || !sheetResult.student) {
+    const defaultBaseUrl = (process.env.SERVER_BASE_URL || "https://whatsapp-kairos-video.onrender.com").replace(/\/$/, "");
     return [
       {
-        type: "button",
-        body: aiResp.messageText,
-        buttons: aiResp.buttons
+        type: "image",
+        url: `${defaultBaseUrl}/media/kairos_img.jpeg`
+      },
+      {
+        type: "text",
+        text: `This is Kairos - Your Favourite Teacher. Lets start your Business Success Class. Wish you a Happy Learning\n\n` +
+              `👋 *Welcome to Kairos*\n*Bienvenue sur Kairos*\n\n` +
+              `Please register to start your courses using the links below / Veuillez vous inscrire pour commencer vos cours en utilisant les liens ci-dessous :\n\n` +
+              `🇬🇧 *English:*\n👉 https://reg-fe-and-sme-sprout.web.app\n\n` +
+              `🇫🇷 *Français :*\n👉 https://reg-feandsme-sprout.web.app/registration`
       }
     ];
   }
 
-  // Graceful Fallback if AI disabled or offline
-  return [
-    {
-      type: "button",
-      body: `💡 *Kairos AI Advisor:*\n\nBased on your profile, this role matches candidates looking for flexible hours. The verified employer provides free onboarding, so no prior experience is required!\n\nWould you like to apply now?`,
-      buttons: [
-        { id: "apply_offer", title: "Apply" },
-        { id: "ask_another", title: "Ask Kairos AI" },
-        { id: "see_more_offers", title: "Other offers" }
-      ]
-    }
-  ];
-}
+  const student = sheetResult.student;
+  const studentName = capitalize(student.name);
+  const courseName = "Business Success Class";
+  const isPaid = isPaymentCompleted(student.paymentStatus);
 
-/**
- * Main Chatbot Engine for Kairos Lite
- * 
- * @param {string} phone Customer WhatsApp phone number
- * @param {string} userMessage Raw text received from customer
- * @param {string|null} buttonId ID of button clicked if interactive
- * @param {string} messageId Meta incoming message ID
- * @returns {Promise<Array<object>>} Array of messages to send sequentially
- */
-async function processMessage(phone, userMessage = "", buttonId = null, messageId = null) {
-  const state = getConversationState(phone);
-  const text = (userMessage || "").trim();
-  const clean = cleanText(text);
+  // Retrieve 12-Module progress state
+  const progressData = studentProgressService.getStudentProgress(phone);
+  const currentModule = progressData.currentModule || 1;
+  const currentModProgress = Number(progressData.moduleProgress[String(currentModule)]) || 0;
+  const progressFormatted = formatDuration(currentModProgress);
+  const completedCount = Array.isArray(progressData.completedModules) ? progressData.completedModules.length : 0;
+  const baseUrl = (process.env.SERVER_BASE_URL || "https://whatsapp-kairos-video.onrender.com").replace(/\/$/, "");
 
-  console.log(`[Kairos Chatbot] From: +${phone} | Step: ${state.step} | Input: "${text}" | ButtonID: ${buttonId || "none"}`);
+  // ========================================================
+  // UNPAID / PENDING STUDENTS (paymentStatus === 'no')
+  // Block video access and instruct: "do payment to continue courses"
+  // ========================================================
+  if (!isPaid) {
+    console.log(`[Access Control] Student ${studentName} (+91 ${student.phone}) paymentStatus is '${student.paymentStatus}'. Video access LOCKED.`);
 
-  // 1. Check if user sent TRACK command anytime
-  if (clean === "track" || buttonId === "track") {
-    const apps = getCandidateApplications(phone);
-    if (apps.length > 0) {
-      let list = apps.map((a, i) => `${i + 1}. *${a.appliedOffer || "Mobile Money agent"}*\n   Status: *Under Review* ✅\n   Employer: Verified Employer\n   Applied with: Kairos Profile`).join("\n\n");
+    // If user clicked [💳 Do Payment] or asked about registration/payment
+    if (rawBtn === "DO_PAYMENT" || rawBtn === "REGISTER_CLASS" || text.includes("pay") || text.includes("register") || text.includes("fee") || text.includes("enroll")) {
       return [
         {
           type: "text",
-          text: `📋 *Your Active Applications:*\n\n${list}\n\nWe will notify you here when the employer updates your status!\nType *Hi* to search for more offers.`
-        }
-      ];
-    } else {
-      return [
-        {
-          type: "text",
-          text: "📋 You have not submitted any applications yet.\n\nType *Hi* to explore and apply to verified free offers!"
-        }
-      ];
-    }
-  }
-
-  // 2. Check if user sent Greeting or Restart anytime
-  if (isGreetingOrRestart(clean, buttonId)) {
-    cancelSubscriptionTimer(phone);
-    resetConversationState(phone);
-    updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
-    return getLanguageSelectionSequence();
-  }
-
-  // 2b. Language Selection Handling (Buttons or Text)
-  const detectedLang = detectLanguageChoice(clean, buttonId);
-  if (
-    buttonId === "lang_en" ||
-    buttonId === "lang_fr" ||
-    (state.step === "AWAITING_LANGUAGE" && detectedLang) ||
-    (state.step === "IDLE" && detectedLang)
-  ) {
-    cancelSubscriptionTimer(phone);
-    const chosenLang = detectedLang || (buttonId === "lang_en" ? "en" : "fr");
-    updateConversationState(phone, {
-      step: "AWAITING_AGREEMENT",
-      collectedData: { ...state.collectedData, language: chosenLang }
-    });
-    return getWelcomeSequence(chosenLang);
-  }
-
-  // 3. GLOBAL INTERACTIVE BUTTON INTERCEPTOR
-  // Buttons sent to WhatsApp stay in chat history. If a user clicks any button
-  // (such as "Choose 1", "Choose 2", "Choose 3", "Next clip", "Audio-only", or course fields),
-  // we handle it immediately, regardless of current step or server restart.
-
-  // 3a. Course Selection: Choose 1, Choose 2, Choose 3
-  if (
-    buttonId === "choose_1" ||
-    buttonId === "choose_2" ||
-    buttonId === "choose_3" ||
-    clean === "choose 1" ||
-    clean === "choose 2" ||
-    clean === "choose 3" ||
-    clean === "selling online" ||
-    clean === "running a small shop" ||
-    clean === "basic excel"
-  ) {
-    const courseKey = detectCourseSelection(clean, buttonId);
-    updateConversationState(phone, {
-      step: "COURSE_LESSONS",
-      collectedData: {
-        ...state.collectedData,
-        courseKey,
-        currentClip: 1
-      }
-    });
-    return getCourseLessonSequence(courseKey, 1, false);
-  }
-
-  // 3b. Next Clip
-  if (buttonId?.startsWith("next_clip_") || clean === "next clip" || clean === "next") {
-    const courseKey = state.collectedData?.courseKey || "choose_1";
-    const currentClip = state.collectedData?.currentClip || 1;
-    const nextNum = buttonId?.startsWith("next_clip_")
-      ? parseInt(buttonId.replace("next_clip_", ""), 10)
-      : currentClip + 1;
-
-    if (nextNum > 4) {
-      resetConversationState(phone);
-      return [
-        {
-          type: "text",
-          text: "🎉 *Lesson 1 Complete!*\nYou finished all 4 clips today. Lesson 2 will arrive tomorrow at 6:00 pm.\n\nType *Hi* anytime to explore more courses or jobs!"
+          text: `🎓 *Kairos - Course Payment & Activation*\n\n` +
+                `Hello *${studentName}*,\n\n` +
+                `⚠️ *Please do payment to continue courses.*\n\n` +
+                `To complete your registration and unlock your *${courseName} Masterclass* video lessons, choose your language below:\n\n` +
+                `🇬🇧 *English Registration & Payment:*\n👉 https://reg-fe-and-sme-sprout.web.app\n\n` +
+                `🇫🇷 *Inscription et Paiement en Français :*\n👉 https://reg-feandsme-sprout.web.app/registration\n\n` +
+                `Once payment is confirmed, all video lessons will unlock automatically on WhatsApp!`
         }
       ];
     }
 
-    updateConversationState(phone, {
-      step: "COURSE_LESSONS",
-      collectedData: { ...state.collectedData, currentClip: nextNum }
-    });
-    return getCourseLessonSequence(courseKey, nextNum, false);
-  }
-
-  // 3c. Audio-only clip toggle
-  if (buttonId?.startsWith("audio_clip_") || clean.includes("audio-only") || clean === "audio") {
-    const courseKey = state.collectedData?.courseKey || "choose_1";
-    const currentClip = state.collectedData?.currentClip || 1;
-    const clipNum = buttonId?.startsWith("audio_clip_")
-      ? parseInt(buttonId.replace("audio_clip_", ""), 10)
-      : currentClip;
-    return getCourseLessonSequence(courseKey, clipNum, true);
-  }
-
-  // 3d. Video clip toggle
-  if (buttonId?.startsWith("video_clip_") || clean.includes("video version") || clean === "video") {
-    const courseKey = state.collectedData?.courseKey || "choose_1";
-    const currentClip = state.collectedData?.currentClip || 1;
-    const clipNum = buttonId?.startsWith("video_clip_")
-      ? parseInt(buttonId.replace("video_clip_", ""), 10)
-      : currentClip;
-    return getCourseLessonSequence(courseKey, clipNum, false);
-  }
-
-  // 3e. Field Selection buttons
-  if (buttonId?.startsWith("field_")) {
-    const field = detectCourseField(clean, buttonId);
-    updateConversationState(phone, {
-      step: "COURSE_SELECTION",
-      collectedData: { ...state.collectedData, field }
-    });
-    return getCourseListMessage();
-  }
-
-  // 3f. "A course" button
-  if (buttonId === "opt_course") {
-    updateConversationState(phone, {
-      step: "COURSE_FIELD_SELECTION",
-      collectedData: { ...state.collectedData, lookingFor: "A course" }
-    });
-    return getCourseFieldsMessage();
-  }
-
-  // 3g. Agree button -> Sends demo video 1st, then timer triggers subscription prompt after video playback
-  if (
-    buttonId === "agree" ||
-    (state.step === "AWAITING_AGREEMENT" && (
-      clean === "j'accepte" ||
-      clean === "accepte" ||
-      clean === "accepter" ||
-      clean === "i accept" ||
-      clean === "accept" ||
-      clean === "i agree" ||
-      clean === "agree" ||
-      clean === "oui" ||
-      clean === "yes" ||
-      clean === "d'accord"
-    ))
-  ) {
-    cancelSubscriptionTimer(phone);
-    let lang = state.collectedData?.language;
-    if (!lang) {
-      lang = (clean.includes("agree") || (clean.includes("accept") && !clean.includes("j'"))) ? "en" : "fr";
+    // If user clicked [Contact Support]
+    if (rawBtn === "CONTACT_SUPPORT" || text.includes("support") || text.includes("contact") || text.includes("help")) {
+      return [
+        {
+          type: "button",
+          header: "📞 Admissions & Support",
+          body: `*Kairos Student Helpdesk:*\n\n` +
+                `👤 *Advisor:* Admissions & Accounts\n` +
+                `📱 *Helpline:* +91 70104 72311\n` +
+                `⏰ *Timings:* Mon - Sat (9:00 AM - 7:00 PM)\n\n` +
+                `⚠️ *Please do payment to continue courses.*\n` +
+                `Contact our helpline if you need any assistance with fee payment or enrollment.`,
+          buttons: [
+            { id: "DO_PAYMENT", title: "💳 Do Payment" },
+            { id: "COURSE_INFO", title: "📋 Course Details" }
+          ],
+          footer: "Kairos"
+        }
+      ];
     }
-    updateConversationState(phone, {
-      step: "WATCHING_DEMO_VIDEO",
-      collectedData: { ...state.collectedData, agreed: true, language: lang }
-    });
-    const delaySec = parseInt(process.env.DEMO_VIDEO_DURATION_SECONDS || "30", 10);
-    scheduleSubscriptionPrompt(phone, delaySec);
-    return getDemoVideoMessage(lang);
-  }
 
-  // 3h. More info button
-  if (buttonId === "more_info" || clean === "plus d'infos" || clean === "more info" || clean === "info") {
-    const lang = state.collectedData?.language || "fr";
-    const flow = getFlowConfig(lang);
+    // If user clicked [Course Details]
+    if (rawBtn === "COURSE_INFO" || text.includes("info") || text.includes("detail")) {
+      return [
+        {
+          type: "button",
+          header: "📋 Course Enrollment Status",
+          body: `👤 *Student:* ${studentName}\n` +
+                `📱 *Phone:* +91 ${student.phone}\n` +
+                `📚 *Course:* ${courseName}\n` +
+                `💳 *Payment Status:* ❌ *Pending / Not Paid*\n\n` +
+                `⚠️ *Please do payment to continue courses.*\n\n` +
+                `Video lessons and classroom access remain locked until payment is verified.`,
+          buttons: [
+            { id: "DO_PAYMENT", title: "💳 Do Payment" },
+            { id: "CONTACT_SUPPORT", title: "📞 Contact Support" }
+          ],
+          footer: "Kairos"
+        }
+      ];
+    }
+
+    // Default Greeting for Unpaid Students: "Please do payment to continue courses"
     return [
       {
-        type: "text",
-        text: flow.moreInfoText
+        type: "image",
+        url: `${baseUrl}/media/kairos_img.jpeg`
       },
       {
         type: "button",
-        body: flow.consentQuestion,
-        buttons: flow.consentButtons
+        header: `👋 Hello ${studentName}!`,
+        body: `This is Kairos - Your Favourite Teacher. Lets start your Business Success Class. Wish you a Happy Learning\n\n` +
+              `⚠️ *Please do payment to continue courses.*\n\n` +
+              `Your video lessons are locked until course fee payment is received. Tap *Do Payment* below to proceed!`,
+        buttons: [
+          { id: "DO_PAYMENT", title: "💳 Do Payment" },
+          { id: "CONTACT_SUPPORT", title: "📞 Contact Support" },
+          { id: "COURSE_INFO", title: "📋 Course Details" }
+        ],
+        footer: "Kairos"
       }
     ];
   }
 
-  // 3i. Ask Kairos AI button
-  if (buttonId === "ask_kairos_ai" || clean === "ask kairos ai" || clean === "ask ai") {
-    updateConversationState(phone, {
-      step: "ASK_AI",
-      collectedData: { ...state.collectedData, selectedOffer: state.collectedData?.selectedOffer || "Mobile Money agent" }
-    });
+  // ========================================================
+  // PAID STUDENTS (paymentStatus === 'yes')
+  // Full access: Send native video directly in WhatsApp!
+  // ========================================================
+
+  // CASE 2: User clicked [▶️ Start Class] or requested video playback
+  if (
+    rawBtn === "START_CLASS" ||
+    rawBtn === "RESUME_MODULE_1" ||
+    text.includes("start class") ||
+    text.includes("start course") ||
+    text.includes("start the course") ||
+    text.includes("start") ||
+    text.includes("resume") ||
+    text.includes("play") ||
+    text.includes("module") ||
+    text.includes("video") ||
+    text.includes("watch")
+  ) {
+    const studentObj = {
+      name: student.name,
+      phone: student.phone,
+      course: "Business Success Class",
+      moduleId: currentModule
+    };
+    const { sessionId } = createShortSession(studentObj, currentModProgress, currentModule);
+    const classroomUrl = `${baseUrl}/classroom/${sessionId}`;
+
+    const resumeNotice = currentModProgress > 0
+      ? `▶️ Resuming Module ${currentModule} from: *${progressFormatted}*`
+      : `▶️ Starting Module ${currentModule} from: *00:00*`;
+
+    return [
+      {
+        type: "cta_url",
+        header: `🎥 Module ${currentModule}: Business Success Class`,
+        body: `Hello *${studentName}*!\n\n` +
+              `Your *Business Success Class - Module ${currentModule}* classroom is ready.\n\n` +
+              `${resumeNotice}\n\n` +
+              `Tap the button below to start your class:`,
+        buttonText: `▶️ Open Module ${currentModule}`,
+        url: classroomUrl,
+        footer: "Kairos"
+      }
+    ];
+  }
+
+  // CASE 3: User clicked [🔄 Start from 00:00] (Reset progress)
+  if (
+    rawBtn === "RESET_MODULE_1" ||
+    text.includes("reset") ||
+    text.includes("beginning") ||
+    text.includes("start over")
+  ) {
+    // Reset progress in studentProgressService
+    studentProgressService.setModuleProgress(phone, currentModule, 0);
+    await googleSheetService.updateStudentProgress(phone, 0).catch(() => {});
+
+    const studentObj = {
+      name: student.name,
+      phone: student.phone,
+      course: "Business Success Class",
+      moduleId: currentModule
+    };
+    const { sessionId } = createShortSession(studentObj, 0, currentModule);
+    const classroomUrl = `${baseUrl}/classroom/${sessionId}`;
+
+    return [
+      {
+        type: "cta_url",
+        header: `🔄 Progress Reset to 00:00`,
+        body: `Hello *${studentName}*, your Module ${currentModule} lesson has been reset to the beginning.\n\n` +
+              `Tap below to start playing from 00:00:`,
+        buttonText: `▶️ Open Module ${currentModule} (00:00)`,
+        url: classroomUrl,
+        footer: "Kairos"
+      }
+    ];
+  }
+
+  // CASE 4: User clicked [📋 Course Details] or asked for profile/info
+  if (
+    rawBtn === "COURSE_INFO" ||
+    text.includes("info") ||
+    text.includes("detail") ||
+    text.includes("profile") ||
+    text.includes("status")
+  ) {
     return [
       {
         type: "button",
-        body: "🤖 *Ask Kairos AI*\n\nAsk me anything about this offer! Tap a question below or type your question directly in the chat:",
+        header: "🎓 Student Course Profile",
+        body: `👤 *Name:* ${studentName}\n` +
+              `📱 *Phone:* +91 ${student.phone}\n` +
+              `📚 *Enrolled Course:* Business Success Class (6 Modules)\n` +
+              `📍 *Active Lesson:* Module ${currentModule} of 6\n` +
+              `⏱️ *Module ${currentModule} Progress:* ${progressFormatted}\n` +
+              `🏆 *Completed:* ${completedCount} / 6 Modules\n` +
+              `💳 *Classroom Access:* ✅ Active & Verified`,
         buttons: [
-          { id: "ai_eligible", title: "Am I eligible?" },
-          { id: "ai_suitable", title: "Why suitable for me?" },
-          { id: "apply_offer", title: "Apply" }
-        ]
+          { id: "START_CLASS", title: `▶️ Start Module ${currentModule}` },
+          { id: "RESET_MODULE_1", title: "🔄 Start from 00:00" }
+        ],
+        footer: "Kairos"
       }
     ];
   }
 
-  // 3j. Ask Kairos AI quick prompts
-  if (buttonId === "ai_eligible" || buttonId === "ai_suitable") {
-    updateConversationState(phone, { step: "ASK_AI" });
-    return handleAskAIResponse(phone, state, text, buttonId);
-  }
-
-  // 3k. Subscription Accept
-  if (
-    buttonId === "sub_accept" ||
-    buttonId === "accept" ||
-    (state.step === "AWAITING_SUBSCRIPTION_DECISION" && (
-      clean === "accept" ||
-      clean === "accepte" ||
-      clean === "j'accepte" ||
-      clean === "i accept" ||
-      clean === "accepter" ||
-      clean === "oui" ||
-      clean === "yes"
-    ))
-  ) {
-    cancelSubscriptionTimer(phone);
-    const lang = state.collectedData?.language || ((clean.includes("j'accepte") || clean === "oui" || clean === "accepte") ? "fr" : "en");
-    updateConversationState(phone, {
-      step: "AWAITING_FORM_SUBMISSION",
-      collectedData: { ...state.collectedData, subscriptionDecision: "accept", language: lang }
-    });
-    saveLead({
-      phone: phone,
-      lookingFor: "A course",
-      profile: "Course Candidate",
-      appliedOffer: "Course Subscription",
-      status: "Interested in Course"
-    });
-    return getRegistrationFormMessage(lang);
-  }
-
-  // 3l. Subscription Decline
-  if (
-    buttonId === "sub_decline" ||
-    buttonId === "decline" ||
-    (state.step === "AWAITING_SUBSCRIPTION_DECISION" && (
-      clean === "decline" ||
-      clean === "refuser" ||
-      clean === "non" ||
-      clean === "no"
-    ))
-  ) {
-    cancelSubscriptionTimer(phone);
-    const lang = state.collectedData?.language || "fr";
-    updateConversationState(phone, {
-      step: "DECLINED",
-      collectedData: { ...state.collectedData, subscriptionDecision: "decline" }
-    });
-    const flow = getFlowConfig(lang);
-    const conf = flow.demoVideo || {};
-    return [
-      {
-        type: "text",
-        text: conf.declineMessage || (lang === "en" ? "Thank you for your time! If you change your mind, type *Hi* at any time to watch the video or register." : "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire.")
-      }
-    ];
-  }
-
-  // 3m. Form Submitted (button or text)
-  if (
-    buttonId === "form_submitted" ||
-    (state.step === "AWAITING_FORM_SUBMISSION" && (
-      clean === "form submitted" ||
-      clean === "submitted" ||
-      clean === "submitted ✅" ||
-      clean === "soumis" ||
-      clean === "soumis ✅" ||
-      clean === "j'ai soumis" ||
-      clean === "envoyé" ||
-      clean === "c'est fait" ||
-      clean === "done"
-    ))
-  ) {
-    const lang = state.collectedData?.language || "fr";
-    updateConversationState(phone, {
-      step: "FORM_COMPLETED",
-      collectedData: { ...state.collectedData, formCompleted: true }
-    });
-    saveLead({
-      phone: phone,
-      lookingFor: "A course",
-      profile: "Course Subscriber",
-      appliedOffer: "Course Registration Form",
-      status: "Form Submitted"
-    });
-    return getThankYouContactMessage(lang);
-  }
-
-  // 4. Conversational State Machine
-  switch (state.step) {
-    case "IDLE": {
-      resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
-      return getLanguageSelectionSequence();
+  // CASE 5: Default Greeting & Onboarding for Paid Students
+  return [
+    {
+      type: "image",
+      url: `${baseUrl}/media/kairos_img.jpeg`
+    },
+    {
+      type: "button",
+      header: `👋 Hello ${studentName}!`,
+      body: `This is Kairos - Your Favourite Teacher. Lets start your Business Success Class. Wish you a Happy Learning`,
+      buttons: [
+        { id: "START_CLASS", title: "▶️ Start Class" },
+        { id: "RESET_MODULE_1", title: "🔄 Start from 00:00" },
+        { id: "COURSE_INFO", title: "📋 Course Details" }
+      ],
+      footer: "Kairos"
     }
-
-    case "AWAITING_LANGUAGE": {
-      const langChoice = detectLanguageChoice(clean, buttonId);
-      if (langChoice) {
-        updateConversationState(phone, {
-          step: "AWAITING_AGREEMENT",
-          collectedData: { ...state.collectedData, language: langChoice }
-        });
-        return getWelcomeSequence(langChoice);
-      }
-      return getLanguageSelectionSequence();
-    }
-
-    case "AWAITING_AGREEMENT": {
-      const lang = state.collectedData?.language || "fr";
-      if (buttonId === "more_info" || clean === "plus d'infos" || clean === "more info" || clean === "info") {
-        const flow = getFlowConfig(lang);
-        return [
-          {
-            type: "text",
-            text: flow.moreInfoText
-          },
-          {
-            type: "button",
-            body: flow.consentQuestion,
-            buttons: flow.consentButtons
-          }
-        ];
-      }
-
-      if (
-        buttonId === "agree" ||
-        clean === "j'accepte" ||
-        clean === "accepte" ||
-        clean === "accepter" ||
-        clean === "i accept" ||
-        clean === "accept" ||
-        clean === "i agree" ||
-        clean === "agree" ||
-        clean === "yes" ||
-        clean === "oui" ||
-        clean === "d'accord" ||
-        clean === "ok" ||
-        clean === "1"
-      ) {
-        cancelSubscriptionTimer(phone);
-        updateConversationState(phone, {
-          step: "WATCHING_DEMO_VIDEO",
-          collectedData: { ...state.collectedData, agreed: true }
-        });
-        const delaySec = parseInt(process.env.DEMO_VIDEO_DURATION_SECONDS || "30", 10);
-        scheduleSubscriptionPrompt(phone, delaySec);
-        return getDemoVideoMessage(lang);
-      }
-
-      const flow = getFlowConfig(lang);
-      return [
-        {
-          type: "button",
-          body: flow.consentQuestion,
-          buttons: flow.consentButtons
-        }
-      ];
-    }
-
-    case "WATCHING_DEMO_VIDEO": {
-      // If user sends any message or taps while watching demo video, prompt them immediately
-      cancelSubscriptionTimer(phone);
-      updateConversationState(phone, { step: "AWAITING_SUBSCRIPTION_DECISION" });
-      const lang = state.collectedData?.language || "fr";
-      return getSubscriptionQuestionMessage(lang);
-    }
-
-    case "AWAITING_SUBSCRIPTION_DECISION": {
-      const lang = state.collectedData?.language || "fr";
-      if (
-        buttonId === "sub_accept" ||
-        buttonId === "accept" ||
-        clean === "accept" ||
-        clean === "accepte" ||
-        clean === "j'accepte" ||
-        clean === "i accept" ||
-        clean === "accepter" ||
-        clean === "yes" ||
-        clean === "oui"
-      ) {
-        cancelSubscriptionTimer(phone);
-        updateConversationState(phone, {
-          step: "AWAITING_FORM_SUBMISSION",
-          collectedData: { ...state.collectedData, subscriptionDecision: "accept" }
-        });
-        saveLead({
-          phone: phone,
-          lookingFor: "A course",
-          profile: "Course Candidate",
-          appliedOffer: "Course Subscription",
-          status: "Interested in Course"
-        });
-        return getRegistrationFormMessage(lang);
-      }
-
-      if (buttonId === "sub_decline" || buttonId === "decline" || clean === "decline" || clean === "refuser" || clean === "non" || clean === "no") {
-        cancelSubscriptionTimer(phone);
-        updateConversationState(phone, {
-          step: "DECLINED",
-          collectedData: { ...state.collectedData, subscriptionDecision: "decline" }
-        });
-        const flow = getFlowConfig(lang);
-        const conf = flow.demoVideo || {};
-        return [
-          {
-            type: "text",
-            text: conf.declineMessage || (lang === "en" ? "Thank you for your time! If you change your mind, type *Hi* at any time to watch the video or register." : "Merci pour votre temps ! Si vous changez d'avis, écrivez *Bonjour* à tout moment pour voir la vidéo ou vous inscrire.")
-          }
-        ];
-      }
-
-      return getSubscriptionQuestionMessage(lang);
-    }
-
-    case "AWAITING_FORM_SUBMISSION": {
-      // User filled form and returned to WhatsApp
-      const lang = state.collectedData?.language || "fr";
-      updateConversationState(phone, {
-        step: "FORM_COMPLETED",
-        collectedData: { ...state.collectedData, formCompleted: true }
-      });
-      saveLead({
-        phone: phone,
-        lookingFor: "A course",
-        profile: "Course Subscriber",
-        appliedOffer: "Course Registration Form",
-        status: "Form Submitted"
-      });
-      return getThankYouContactMessage(lang);
-    }
-
-    case "FORM_COMPLETED": {
-      const lang = state.collectedData?.language || "fr";
-      return [
-        {
-          type: "text",
-          text: lang === "en"
-            ? "Thank you, we will contact you shortly. Type *Hi* if you need anything else!"
-            : "Merci, nous vous contacterons sous peu. Écrivez *Bonjour* si vous avez besoin d'autre chose !"
-        }
-      ];
-    }
-
-    case "DECLINED": {
-      const lang = state.collectedData?.language || "fr";
-      return [
-        {
-          type: "text",
-          text: lang === "en"
-            ? "Type *Hi* at any time to watch the demo video or register!"
-            : "Écrivez *Bonjour* à tout moment pour regarder la vidéo de démonstration ou vous inscrire !"
-        }
-      ];
-    }
-
-    case "AWAITING_LOOKING_FOR": {
-      const choice = detectLookingFor(clean, buttonId);
-      if (choice) {
-        if (choice === "A course") {
-          updateConversationState(phone, {
-            step: "COURSE_FIELD_SELECTION",
-            collectedData: { ...state.collectedData, lookingFor: "A course" }
-          });
-          return getCourseFieldsMessage();
-        }
-
-        updateConversationState(phone, {
-          step: "AWAITING_PROFILE",
-          collectedData: { ...state.collectedData, lookingFor: choice }
-        });
-        return getProfileMessage();
-      }
-
-      return [
-        {
-          type: "button",
-          body: "Please choose what you are looking for today:",
-          buttons: KAIROS_CONFIG.lookingForButtons
-        }
-      ];
-    }
-
-    case "COURSE_FIELD_SELECTION": {
-      const field = detectCourseField(clean, buttonId);
-      updateConversationState(phone, {
-        step: "COURSE_SELECTION",
-        collectedData: { ...state.collectedData, field }
-      });
-      return getCourseListMessage();
-    }
-
-    case "COURSE_SELECTION": {
-      const courseKey = detectCourseSelection(clean, buttonId);
-      updateConversationState(phone, {
-        step: "COURSE_LESSONS",
-        collectedData: {
-          ...state.collectedData,
-          courseKey,
-          currentClip: 1
-        }
-      });
-      return getCourseLessonSequence(courseKey, 1, false);
-    }
-
-    case "COURSE_LESSONS": {
-      const courseKey = state.collectedData?.courseKey || "choose_1";
-      let currentClip = state.collectedData?.currentClip || 1;
-
-      // Allow switching courses directly from earlier Course List buttons
-      if (buttonId?.startsWith("choose_") || clean.startsWith("choose ") || clean === "1" || clean === "2" || clean === "3") {
-        const newCourseKey = detectCourseSelection(clean, buttonId);
-        updateConversationState(phone, {
-          collectedData: { ...state.collectedData, courseKey: newCourseKey, currentClip: 1 }
-        });
-        return getCourseLessonSequence(newCourseKey, 1, false);
-      }
-
-      // Allow switching fields from earlier field buttons
-      if (buttonId?.startsWith("field_")) {
-        const field = detectCourseField(clean, buttonId);
-        updateConversationState(phone, {
-          step: "COURSE_SELECTION",
-          collectedData: { ...state.collectedData, field }
-        });
-        return getCourseListMessage();
-      }
-
-      if (buttonId === "opt_course") {
-        updateConversationState(phone, {
-          step: "COURSE_FIELD_SELECTION",
-          collectedData: { ...state.collectedData, lookingFor: "A course" }
-        });
-        return getCourseFieldsMessage();
-      }
-
-      if (buttonId === "course_done" || clean.includes("finish") || clean.includes("done")) {
-        resetConversationState(phone);
-        return [
-          {
-            type: "text",
-            text: "🎉 *Lesson 1 Complete!*\nYou finished today's session. Lesson 2 will arrive tomorrow at 6:00 pm.\n\nType *Hi* anytime to explore more courses or jobs!"
-          }
-        ];
-      }
-
-      if (buttonId?.startsWith("next_clip_") || clean.includes("next")) {
-        const nextNum = buttonId?.startsWith("next_clip_")
-          ? parseInt(buttonId.replace("next_clip_", ""), 10)
-          : currentClip + 1;
-
-        if (nextNum > 4) {
-          resetConversationState(phone);
-          return [
-            {
-              type: "text",
-              text: "🎉 *Lesson 1 Complete!*\nYou finished all 4 clips today. Lesson 2 will arrive tomorrow at 6:00 pm.\n\nType *Hi* anytime to explore more courses or jobs!"
-            }
-          ];
-        }
-
-        updateConversationState(phone, {
-          collectedData: { ...state.collectedData, currentClip: nextNum }
-        });
-        return getCourseLessonSequence(courseKey, nextNum, false);
-      }
-
-      if (buttonId?.startsWith("audio_clip_") || clean.includes("audio")) {
-        const clipNum = buttonId?.startsWith("audio_clip_")
-          ? parseInt(buttonId.replace("audio_clip_", ""), 10)
-          : currentClip;
-        return getCourseLessonSequence(courseKey, clipNum, true);
-      }
-
-      if (buttonId?.startsWith("video_clip_") || clean.includes("video")) {
-        const clipNum = buttonId?.startsWith("video_clip_")
-          ? parseInt(buttonId.replace("video_clip_", ""), 10)
-          : currentClip;
-        return getCourseLessonSequence(courseKey, clipNum, false);
-      }
-
-      return getCourseLessonSequence(courseKey, currentClip, false);
-    }
-
-    case "AWAITING_PROFILE": {
-      const profile = detectProfile(clean, buttonId);
-      if (profile) {
-        updateConversationState(phone, {
-          step: "QUESTION_1",
-          collectedData: { profile: profile }
-        });
-        // Screen 4: 4 quick questions intro + Question 1/4
-        return getQuestion1Sequence();
-      }
-
-      return getProfileMessage();
-    }
-
-    case "QUESTION_1": {
-      // User answers Q1: How many hours a day are you available?
-      let hours = "Full time";
-      if (buttonId === "hours_2_3" || clean.includes("2") || clean.includes("3")) {
-        hours = "2 to 3 hours";
-      } else if (buttonId === "hours_4_6" || clean.includes("4") || clean.includes("6")) {
-        hours = "4 to 6 hours";
-      }
-
-      const collected = { ...state.collectedData, hours: hours };
-      updateConversationState(phone, {
-        step: "QUESTION_2",
-        collectedData: collected
-      });
-
-      // Adaptive Assessment: check GenAI
-      const aiQ2 = await aiService.getAdaptiveQuestion(collected, 2);
-      if (aiQ2 && aiQ2.messageText && aiQ2.buttons?.length > 0) {
-        return [
-          {
-            type: "button",
-            body: aiQ2.messageText,
-            buttons: aiQ2.buttons
-          }
-        ];
-      }
-
-      const q2 = KAIROS_CONFIG.questions[1];
-      return [
-        {
-          type: "button",
-          body: q2.prompt,
-          buttons: q2.buttons
-        }
-      ];
-    }
-
-    case "QUESTION_2": {
-      // User answers Q2: Where do you prefer to work?
-      let loc = "From home";
-      if (buttonId === "loc_nearby" || clean.includes("nearby")) {
-        loc = "Nearby";
-      } else if (buttonId === "loc_flexible" || clean.includes("flexible")) {
-        loc = "Flexible / Any";
-      } else if (buttonId) {
-        loc = buttonId;
-      }
-
-      const collected = { ...state.collectedData, workLocation: loc };
-      updateConversationState(phone, {
-        step: "QUESTION_3",
-        collectedData: collected
-      });
-
-      // Adaptive Assessment: check GenAI
-      const aiQ3 = await aiService.getAdaptiveQuestion(collected, 3);
-      if (aiQ3 && aiQ3.messageText && aiQ3.buttons?.length > 0) {
-        return [
-          {
-            type: "button",
-            body: aiQ3.messageText,
-            buttons: aiQ3.buttons
-          }
-        ];
-      }
-
-      const q3 = KAIROS_CONFIG.questions[2];
-      return [
-        {
-          type: "button",
-          body: q3.prompt,
-          buttons: q3.buttons
-        }
-      ];
-    }
-
-    case "QUESTION_3": {
-      // User answers Q3: What device do you have available?
-      let dev = "Smartphone";
-      if (buttonId === "dev_pc" || clean.includes("computer") || clean.includes("laptop")) {
-        dev = "Computer / Laptop";
-      } else if (buttonId === "dev_both" || clean.includes("both")) {
-        dev = "Both";
-      } else if (buttonId) {
-        dev = buttonId;
-      }
-
-      const collected = { ...state.collectedData, device: dev };
-      updateConversationState(phone, {
-        step: "QUESTION_4",
-        collectedData: collected
-      });
-
-      // Adaptive Assessment: check GenAI
-      const aiQ4 = await aiService.getAdaptiveQuestion(collected, 4);
-      if (aiQ4 && aiQ4.messageText && aiQ4.buttons?.length > 0) {
-        return [
-          {
-            type: "button",
-            body: aiQ4.messageText,
-            buttons: aiQ4.buttons
-          }
-        ];
-      }
-
-      const q4 = KAIROS_CONFIG.questions[3];
-      return [
-        {
-          type: "button",
-          body: q4.prompt,
-          buttons: q4.buttons
-        }
-      ];
-    }
-
-    case "QUESTION_4": {
-      // User answers Q4: When can you start?
-      let start = "Immediately";
-      if (buttonId === "start_week" || clean.includes("week")) {
-        start = "Within a week";
-      } else if (buttonId === "start_month" || clean.includes("month")) {
-        start = "In a month";
-      } else if (buttonId) {
-        start = buttonId;
-      }
-
-      const collected = { ...state.collectedData, startDate: start };
-      updateConversationState(phone, {
-        step: "OFFERS_LIST",
-        collectedData: collected
-      });
-
-      // Personalized Job Matching via GenAI
-      const aiMatch = await aiService.getPersonalizedJobMatching(collected, JOB_CATALOG);
-      if (aiMatch && aiMatch.messageText && aiMatch.buttons?.length > 0) {
-        return [
-          {
-            type: "button",
-            body: aiMatch.messageText,
-            buttons: aiMatch.buttons
-          }
-        ];
-      }
-
-      // Screen 5: Here are 3 offers for you, with work from home possible:
-      return getOffersListSequence();
-    }
-
-    case "OFFERS_LIST": {
-      // Check if user clicked "Details of offer 1" or asked for offer details
-      if (
-        buttonId === "details_offer_1" ||
-        buttonId === "details_offer_3" ||
-        clean.includes("detail") ||
-        clean.includes("offer 1") ||
-        clean.includes("offer 3") ||
-        clean === "1" ||
-        clean === "3"
-      ) {
-        updateConversationState(phone, {
-          step: "OFFER_DETAILS",
-          collectedData: { selectedOffer: "Mobile Money agent" }
-        });
-        // Screen 6: Offer details & Apply with your Kairos profile
-        return getOfferDetailsSequence();
-      }
-
-      if (buttonId === "see_more_offers" || clean.includes("more") || clean.includes("see more")) {
-        return [
-          {
-            type: "text",
-            text: "Here are more verified offers for you:"
-          },
-          {
-            type: "button",
-            body: KAIROS_CONFIG.moreOffersList,
-            buttons: [
-              { id: "details_offer_1", title: "Details of offer 1" },
-              { id: "details_offer_3", title: "Details of offer 3" }
-            ]
-          }
-        ];
-      }
-
-      // Default re-show offers
-      return getOffersListSequence();
-    }
-
-    case "OFFER_DETAILS": {
-      // Check if user clicked "Ask Kairos AI"
-      if (buttonId === "ask_kairos_ai" || clean === "ask kairos ai" || clean === "ask ai" || clean === "ask") {
-        updateConversationState(phone, {
-          step: "ASK_AI",
-          collectedData: { ...state.collectedData, selectedOffer: state.collectedData?.selectedOffer || "Mobile Money agent" }
-        });
-        return [
-          {
-            type: "button",
-            body: "🤖 *Ask Kairos AI*\n\nAsk me anything about this offer! Tap a question below or type your question directly in the chat:",
-            buttons: [
-              { id: "ai_eligible", title: "Am I eligible?" },
-              { id: "ai_suitable", title: "Why suitable for me?" },
-              { id: "apply_offer", title: "Apply" }
-            ]
-          }
-        ];
-      }
-
-      // If user tapped quick AI prompts directly
-      if (buttonId === "ai_eligible" || buttonId === "ai_suitable") {
-        updateConversationState(phone, { step: "ASK_AI" });
-        return handleAskAIResponse(phone, state, text, buttonId);
-      }
-
-      // Check if user clicked "Apply"
-      if (buttonId === "apply_offer" || clean === "apply") {
-        updateConversationState(phone, {
-          step: "APPLIED"
-        });
-
-        const finalState = getConversationState(phone);
-        saveLead({
-          phone: phone,
-          lookingFor: finalState.collectedData.lookingFor,
-          profile: finalState.collectedData.profile,
-          hours: finalState.collectedData.hours,
-          workLocation: finalState.collectedData.workLocation,
-          device: finalState.collectedData.device,
-          startDate: finalState.collectedData.startDate,
-          appliedOffer: "Mobile Money agent"
-        });
-
-        // Screen 6 bottom: Application sent. Type TRACK to see your applications.
-        return [
-          {
-            type: "text",
-            text: KAIROS_CONFIG.applicationSuccessMessage
-          }
-        ];
-      }
-
-      if (buttonId === "edit_cv" || clean.includes("edit") || clean.includes("cv")) {
-        updateConversationState(phone, {
-          step: "AWAITING_CV_UPDATE"
-        });
-        return [
-          {
-            type: "text",
-            text: "Please send your updated details (e.g. your full name, location, and key skills or experience) to update your Kairos CV:"
-          }
-        ];
-      }
-
-      return getOfferDetailsSequence();
-    }
-
-    case "ASK_AI": {
-      // User is in Ask Kairos AI mode
-      if (buttonId === "apply_offer" || clean === "apply") {
-        updateConversationState(phone, { step: "APPLIED" });
-        const finalState = getConversationState(phone);
-        saveLead({
-          phone: phone,
-          lookingFor: finalState.collectedData.lookingFor,
-          profile: finalState.collectedData.profile,
-          hours: finalState.collectedData.hours,
-          workLocation: finalState.collectedData.workLocation,
-          device: finalState.collectedData.device,
-          startDate: finalState.collectedData.startDate,
-          appliedOffer: finalState.collectedData.selectedOffer || "Mobile Money agent"
-        });
-        return [
-          {
-            type: "text",
-            text: KAIROS_CONFIG.applicationSuccessMessage
-          }
-        ];
-      }
-
-      if (buttonId === "back_to_offers" || buttonId === "see_more_offers" || clean.includes("back")) {
-        updateConversationState(phone, { step: "OFFERS_LIST" });
-        return getOffersListSequence();
-      }
-
-      if (buttonId === "ask_another") {
-        return [
-          {
-            type: "button",
-            body: "🤖 *Ask Kairos AI*\n\nAsk another question or tap below:",
-            buttons: [
-              { id: "ai_eligible", title: "Am I eligible?" },
-              { id: "ai_suitable", title: "Why suitable for me?" },
-              { id: "apply_offer", title: "Apply" }
-            ]
-          }
-        ];
-      }
-
-      // If user typed custom question or tapped prompt
-      return handleAskAIResponse(phone, state, text, buttonId);
-    }
-
-    case "AWAITING_CV_UPDATE": {
-      // User typed updated CV text
-      updateConversationState(phone, {
-        step: "OFFER_DETAILS",
-        collectedData: { name: text }
-      });
-
-      return [
-        {
-          type: "text",
-          text: "✅ Your Kairos profile CV has been updated!"
-        },
-        ...getOfferDetailsSequence()
-      ];
-    }
-
-    case "APPLIED": {
-      // Already applied -> if user sends text, guide them
-      if (clean === "track") {
-        const apps = getCandidateApplications(phone);
-        let list = apps.map((a, i) => `${i + 1}. *${a.appliedOffer || "Mobile Money agent"}*\n   Status: *Under Review* ✅\n   Employer: Verified Employer\n   Applied with: Kairos Profile`).join("\n\n");
-        return [
-          {
-            type: "text",
-            text: `📋 *Your Active Applications:*\n\n${list}\n\nWe will notify you here when the employer updates your status!\nType *Hi* to search for more offers.`
-          }
-        ];
-      }
-
-      resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
-      return getLanguageSelectionSequence();
-    }
-
-    default: {
-      resetConversationState(phone);
-      updateConversationState(phone, { step: "AWAITING_LANGUAGE" });
-      return getLanguageSelectionSequence();
-    }
-  }
+  ];
 }
 
 module.exports = {
   processMessage,
-  getLanguageSelectionSequence,
-  getWelcomeSequence,
-  getLookingForMessage,
-  getProfileMessage,
-  getQuestion1Sequence,
-  getOffersListSequence,
-  getOfferDetailsSequence
+  formatDuration
 };
