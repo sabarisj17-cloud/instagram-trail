@@ -1,6 +1,6 @@
 /**
  * Sprout Knowledge Solutions (SproutKS)
- * Google Apps Script Web App — Store Incoming WhatsApp User Phone Numbers + Date & Time
+ * Google Apps Script Web App — Store Incoming WhatsApp User Number, Date, Time & Details
  *
  * Setup:
  * 1. Open your Google Sheet -> Extensions > Apps Script.
@@ -24,7 +24,7 @@ function doGet() {
 }
 
 /**
- * Store incoming WhatsApp user's phone number, date, and time (POST)
+ * Store incoming WhatsApp user's phone number, date, time, and details (POST)
  */
 function doPost(e) {
   const lock = LockService.getScriptLock();
@@ -55,6 +55,10 @@ function doPost(e) {
     }
 
     const formattedPhone = "+" + digits;
+    const name = String(data.name || "").trim();
+    const location = String(data.location || "").trim();
+    const reason = String(data.reason || data.details || "").trim();
+
     const now = new Date();
     const dateStr = Utilities.formatDate(now, TIMEZONE, "dd-MM-yyyy");
     const timeStr = Utilities.formatDate(now, TIMEZONE, "hh:mm:ss a");
@@ -66,7 +70,7 @@ function doPost(e) {
 
     const lastRow = sheet.getLastRow();
 
-    // If number already exists, update its Date & Time without creating duplicate rows
+    // If number already exists, update Date, Time, and any newly provided details
     if (lastRow > 1) {
       const phoneValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
       for (let i = 0; i < phoneValues.length; i++) {
@@ -75,9 +79,13 @@ function doPost(e) {
           const existingRow = i + 2;
           sheet.getRange(existingRow, 2).setNumberFormat("@").setValue(dateStr);
           sheet.getRange(existingRow, 3).setNumberFormat("@").setValue(timeStr);
+          if (name) sheet.getRange(existingRow, 4).setNumberFormat("@").setValue(name);
+          if (location) sheet.getRange(existingRow, 5).setNumberFormat("@").setValue(location);
+          if (reason) sheet.getRange(existingRow, 6).setNumberFormat("@").setValue(reason);
+
           return createJsonResponse({
             status: "success",
-            action: "updated_timestamp",
+            action: name || location || reason ? "updated_details" : "updated_timestamp",
             phoneNumber: formattedPhone,
             date: dateStr,
             time: timeStr,
@@ -87,11 +95,14 @@ function doPost(e) {
       }
     }
 
-    // New number: append Phone Number, Date, and Time
+    // New user: append Phone Number, Date, Time, and any provided details
     const targetRow = lastRow + 1;
     sheet.getRange(targetRow, 1).setNumberFormat("@").setValue(formattedPhone);
     sheet.getRange(targetRow, 2).setNumberFormat("@").setValue(dateStr);
     sheet.getRange(targetRow, 3).setNumberFormat("@").setValue(timeStr);
+    if (name) sheet.getRange(targetRow, 4).setNumberFormat("@").setValue(name);
+    if (location) sheet.getRange(targetRow, 5).setNumberFormat("@").setValue(location);
+    if (reason) sheet.getRange(targetRow, 6).setNumberFormat("@").setValue(reason);
 
     return createJsonResponse({
       status: "success",
@@ -114,22 +125,40 @@ function doPost(e) {
 }
 
 /**
- * Ensure headers exist for Phone Number, Date, and Time (safe for existing sheets)
+ * Ensure headers exist for Phone Number, Date, Time, Name, Location, and Reason
  */
 function ensureSheetHeaders(sheet) {
-  const headers = ["WhatsApp Phone Number", "Date", "Time"];
+  const headers = [
+    "WhatsApp Phone Number",
+    "Date",
+    "Time",
+    "Name",
+    "Location",
+    "Reason for Contacting"
+  ];
   const headerRange = sheet.getRange(1, 1, 1, headers.length);
   const current = headerRange.getValues()[0];
 
-  if (current[0] !== headers[0] || current[1] !== headers[1] || current[2] !== headers[2]) {
+  let needsUpdate = false;
+  for (let i = 0; i < headers.length; i++) {
+    if (current[i] !== headers[i]) {
+      needsUpdate = true;
+      break;
+    }
+  }
+
+  if (needsUpdate) {
     headerRange.setValues([headers]);
     headerRange.setFontWeight("bold");
     headerRange.setBackground("#005C53");
     headerRange.setFontColor("#FFFFFF");
     sheet.setFrozenRows(1);
-    sheet.setColumnWidth(1, 220);
-    sheet.setColumnWidth(2, 130);
-    sheet.setColumnWidth(3, 130);
+    sheet.setColumnWidth(1, 200);
+    sheet.setColumnWidth(2, 120);
+    sheet.setColumnWidth(3, 120);
+    sheet.setColumnWidth(4, 180);
+    sheet.setColumnWidth(5, 180);
+    sheet.setColumnWidth(6, 260);
   }
 }
 

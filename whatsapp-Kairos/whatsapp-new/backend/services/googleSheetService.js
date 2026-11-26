@@ -8,17 +8,15 @@ function getUserNumberScriptUrl() {
 }
 
 /**
- * Records an incoming WhatsApp user's phone number alone into Google Sheets
- * via the configured Apps Script Web App.
+ * Records an incoming WhatsApp user's phone number and optional details
+ * into Google Sheets via the configured Apps Script Web App.
  *
- * @param {string|object} phoneOrOptions Sender's WhatsApp phone number
+ * @param {string|object} phoneOrOptions Phone number string or { phoneNumber, name, location, reason }
  * @returns {Promise<{success: boolean, data?: object, message?: string}>}
  */
 async function recordUserNumber(phoneOrOptions) {
-  const rawPhone =
-    typeof phoneOrOptions === "object" && phoneOrOptions !== null
-      ? phoneOrOptions.phoneNumber || phoneOrOptions.phone
-      : phoneOrOptions;
+  const isObj = typeof phoneOrOptions === "object" && phoneOrOptions !== null;
+  const rawPhone = isObj ? phoneOrOptions.phoneNumber || phoneOrOptions.phone : phoneOrOptions;
 
   const cleanPhone = String(rawPhone || "").replace(/\D/g, "");
   if (!cleanPhone || cleanPhone.length < 7) {
@@ -27,6 +25,12 @@ async function recordUserNumber(phoneOrOptions) {
 
   const url = getUserNumberScriptUrl();
   const payload = { phoneNumber: cleanPhone };
+
+  if (isObj) {
+    if (phoneOrOptions.name) payload.name = String(phoneOrOptions.name).trim().slice(0, 150);
+    if (phoneOrOptions.location) payload.location = String(phoneOrOptions.location).trim().slice(0, 150);
+    if (phoneOrOptions.reason) payload.reason = String(phoneOrOptions.reason).trim().slice(0, 500);
+  }
 
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -44,7 +48,7 @@ async function recordUserNumber(phoneOrOptions) {
         return { success: false, message: errMsg, data };
       }
 
-      console.log(`[GoogleSheetService] User number stored in Google Sheet (${cleanPhone}):`, data);
+      console.log(`[GoogleSheetService] Saved to Google Sheet (${cleanPhone}):`, data);
       return { success: true, data };
     } catch (error) {
       const status = error.response?.status;
@@ -53,7 +57,7 @@ async function recordUserNumber(phoneOrOptions) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         continue;
       }
-      console.error(`[GoogleSheetService] Error storing user number (${cleanPhone}):`, error.message);
+      console.error(`[GoogleSheetService] Error saving to Google Sheet (${cleanPhone}):`, error.message);
       return { success: false, message: error.message };
     }
   }

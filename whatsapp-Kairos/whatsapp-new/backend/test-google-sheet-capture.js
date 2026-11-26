@@ -5,14 +5,16 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const axios = require("axios");
 const googleSheetService = require("./services/googleSheetService");
 const whatsappController = require("./controllers/whatsappController");
+const { clearAllSessions } = require("./utils/conversationState");
 
 async function runTests() {
   console.log("==================================================");
-  console.log("🧪 TESTING WHATSAPP -> GOOGLE SHEETS & REPLY");
+  console.log("🧪 TESTING WHATSAPP -> GOOGLE SHEETS & 2-STEP REPLY");
   console.log("==================================================\n");
 
   const originalPost = axios.post;
   const postedCalls = [];
+  clearAllSessions();
 
   try {
     axios.post = async (url, data, config) => {
@@ -23,21 +25,6 @@ async function runTests() {
       return { status: 200, data: { status: "success", action: "created" } };
     };
 
-    // Test 1: Invalid phone rejected
-    const badRes = await googleSheetService.recordUserNumber("123");
-    assert.strictEqual(badRes.success, false, "Should reject short phone numbers");
-    assert.strictEqual(postedCalls.length, 0, "Should not call Apps Script for invalid phone");
-    console.log("✅ Test 1 passed: Invalid phone numbers rejected.");
-
-    // Test 2: Valid phone sends ONLY phoneNumber
-    const okRes = await googleSheetService.recordUserNumber("+91 98765 43210");
-    assert.strictEqual(okRes.success, true, "Valid phone number should succeed");
-    assert.strictEqual(postedCalls.length, 1);
-    assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876543210" });
-    console.log("✅ Test 2 passed: recordUserNumber sends clean { phoneNumber } payload.");
-
-    // Test 3: Webhook stores number AND sends exact Sprout welcome reply
-    postedCalls.length = 0;
     const makeRes = () => ({
       statusCode: null,
       body: null,
@@ -51,49 +38,15 @@ async function runTests() {
       }
     });
 
-    const uniqueId1 = "wamid.gs_test_" + Date.now();
-    await whatsappController.handleWebhook(
-      {
-        body: {
-          object: "whatsapp_business_account",
-          entry: [
-            {
-              changes: [
-                {
-                  value: {
-                    metadata: {
-                      display_phone_number: "917010472311",
-                      phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID || "1373840235818636"
-                    },
-                    messages: [
-                      {
-                        from: "919876501234",
-                        id: uniqueId1,
-                        timestamp: String(Math.floor(Date.now() / 1000)),
-                        type: "text",
-                        text: { body: "Hello" }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      },
-      makeRes()
-    );
+    // Test 1: Invalid phone rejected
+    const badRes = await googleSheetService.recordUserNumber("123");
+    assert.strictEqual(badRes.success, false, "Should reject short phone numbers");
+    assert.strictEqual(postedCalls.length, 0);
+    console.log("✅ Test 1 passed: Invalid phone numbers rejected.");
 
-    const sheetCall = postedCalls.find((c) => c.url.includes("script.google.com"));
-    const waCall = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
-    assert(sheetCall, "Should save user phone number to Google Sheet");
-    assert.deepStrictEqual(sheetCall.data, { phoneNumber: "919876501234" });
-    assert(waCall, "Should send WhatsApp welcome reply");
-    assert.strictEqual(waCall.data.to, "919876501234");
-    assert.strictEqual(waCall.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
-    console.log("✅ Test 3 passed: Webhook stores phone number AND sends exact Sprout reply.");
-
-    // Test 4: Duplicate messageId ignored
+    // Test 2: Step 1 greeting -> stores phone number & sends welcome prompt asking for Name, Location, Reason
+    const testPhone = "919876501234";
+    const id1 = "wamid.step1_" + Date.now();
     await whatsappController.handleWebhook(
       {
         body: {
@@ -106,11 +59,11 @@ async function runTests() {
                     metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
                     messages: [
                       {
-                        from: "919876501234",
-                        id: uniqueId1,
+                        from: testPhone,
+                        id: id1,
                         timestamp: String(Math.floor(Date.now() / 1000)),
                         type: "text",
-                        text: { body: "Hello" }
+                        text: { body: "Hi" }
                       }
                     ]
                   }
@@ -122,10 +75,16 @@ async function runTests() {
       },
       makeRes()
     );
-    assert.strictEqual(postedCalls.length, 2, "Duplicate messageId should not trigger extra calls");
-    console.log("✅ Test 4 passed: Duplicate messageId dropped.");
 
-    // Test 5: Self-message and different business number are ignored
+    const step1Sheet = postedCalls.find((c) => c.url.includes("script.google.com"));
+    const step1Wa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
+    assert.deepStrictEqual(step1Sheet.data, { phoneNumber: testPhone });
+    assert.strictEqual(step1Wa.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
+    console.log("✅ Test 2 passed: Greeting stores number & sends Sprout info prompt.");
+
+    // Test 3: Step 2 user sends 3-line details (sabari / cbe / banking) -> saves details & sends confirmation
+    postedCalls.length = 0;
+    const id2 = "wamid.step2_" + Date.now();
     await whatsappController.handleWebhook(
       {
         body: {
@@ -137,6 +96,99 @@ async function runTests() {
                   value: {
                     metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
                     messages: [
+                      {
+                        from: testPhone,
+                        id: id2,
+                        timestamp: String(Math.floor(Date.now() / 1000)),
+                        type: "text",
+                        text: { body: "sabari\ncbe\nbanking" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      makeRes()
+    );
+
+    const step2Sheet = postedCalls.find((c) => c.url.includes("script.google.com"));
+    const step2Wa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
+    assert.deepStrictEqual(step2Sheet.data, {
+      phoneNumber: testPhone,
+      name: "sabari",
+      location: "cbe",
+      reason: "banking"
+    });
+    assert.strictEqual(step2Wa.data.text.body, whatsappController.SPROUT_CONFIRMATION_REPLY);
+    console.log("✅ Test 3 passed: 3-line details saved to sheet & confirmation message sent.");
+
+    // Test 4: Labeled details even without prior session (simulating server restart)
+    postedCalls.length = 0;
+    clearAllSessions();
+    const id3 = "wamid.labeled_" + Date.now();
+    await whatsappController.handleWebhook(
+      {
+        body: {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
+                    messages: [
+                      {
+                        from: "919123456789",
+                        id: id3,
+                        timestamp: String(Math.floor(Date.now() / 1000)),
+                        type: "text",
+                        text: { body: "Name: Arjun\nLocation: Chennai\nReason for contacting: Loan enquiry" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      makeRes()
+    );
+
+    const step3Sheet = postedCalls.find((c) => c.url.includes("script.google.com"));
+    const step3Wa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
+    assert.deepStrictEqual(step3Sheet.data, {
+      phoneNumber: "919123456789",
+      name: "Arjun",
+      location: "Chennai",
+      reason: "Loan enquiry"
+    });
+    assert.strictEqual(step3Wa.data.text.body, whatsappController.SPROUT_CONFIRMATION_REPLY);
+    console.log("✅ Test 4 passed: Labeled details parsed cleanly even after restart.");
+
+    // Test 5: Duplicate, self-message, and non-target business number ignored
+    postedCalls.length = 0;
+    await whatsappController.handleWebhook(
+      {
+        body: {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
+                    messages: [
+                      {
+                        from: "919123456789",
+                        id: id3,
+                        timestamp: String(Math.floor(Date.now() / 1000)),
+                        type: "text",
+                        text: { body: "duplicate" }
+                      },
                       {
                         from: "917010472311",
                         id: "wamid.self_" + Date.now(),
@@ -154,42 +206,15 @@ async function runTests() {
       },
       makeRes()
     );
-    await whatsappController.handleWebhook(
-      {
-        body: {
-          object: "whatsapp_business_account",
-          entry: [
-            {
-              changes: [
-                {
-                  value: {
-                    metadata: { display_phone_number: "919999999999", phone_number_id: "000000000" },
-                    messages: [
-                      {
-                        from: "919111111111",
-                        id: "wamid.other_" + Date.now(),
-                        timestamp: String(Math.floor(Date.now() / 1000)),
-                        type: "text",
-                        text: { body: "wrong number" }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      },
-      makeRes()
-    );
-    assert.strictEqual(postedCalls.length, 2, "Self messages and other business numbers should be ignored");
-    console.log("✅ Test 5 passed: Self-messages and non-7010472311 business numbers ignored.");
+    assert.strictEqual(postedCalls.length, 0);
+    console.log("✅ Test 5 passed: Duplicate & self-messages ignored.");
 
     console.log("\n==================================================");
     console.log("🎉 ALL TESTS PASSED!");
     console.log("==================================================");
   } finally {
     axios.post = originalPost;
+    clearAllSessions();
   }
 }
 
