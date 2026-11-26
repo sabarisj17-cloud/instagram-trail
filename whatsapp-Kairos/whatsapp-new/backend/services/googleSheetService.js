@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 const DEFAULT_USER_NUMBER_SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbyOupbGtSY0ETFhnXgdjYf8ix2LRbTZL4ZzefpJoCMf_Gobb0oY2TVOVQHTyOhgvZDD/exec";
+  "https://script.google.com/macros/s/AKfycbzbL9Ov8E7b20p0P4iEm1o0dMRkGd_dVJZzIZHNueuYHBcWPf7_CyZ6U2NqhOUxEZc/exec";
 
 function getUserNumberScriptUrl() {
   return process.env.USER_NUMBER_SHEET_SCRIPT_URL || DEFAULT_USER_NUMBER_SCRIPT_URL;
