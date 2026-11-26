@@ -153,7 +153,7 @@ function parseUserDetails(rawText) {
 }
 
 const AD_GREETING_PATTERN =
-  /^(hi|hai|hii+|hello+|helo+|hey|good\s*(morning|afternoon|evening)|namaste|vanakkam|start|menu|can i get more info|i('?m| am) interested|interested|more info)\b/i;
+  /^(hi|hai|hii+|hello+|helo+|hey|good\s*(morning|afternoon|evening)|namaste|vanakkam|start|menu|can i get more info|i('?m| am) (interested|willing)|interested|willing to join|more info)\b/i;
 
 /**
  * Detect whether a message is an initial greeting or Click-to-WhatsApp Ad opening message
@@ -162,7 +162,7 @@ function isGreetingOrAdEntry(message, rawText) {
   if (message && message.referral) {
     return true;
   }
-  const clean = String(rawText || "").trim().toLowerCase();
+  const clean = String(rawText || "").replace(/[\u2018\u2019]/g, "'").trim().toLowerCase();
   if (!clean) {
     return true;
   }
@@ -267,11 +267,11 @@ async function handleWebhook(req, res) {
       const state = getConversationState(from);
       const parsed = parseUserDetails(rawText);
 
-      // Step 3: User clicked [Courses] or [Job] (or typed "courses" / "job" when prompted)
+      // Step 3: User clicked [Courses] or [Job] (or typed "courses" / "job")
       if (
         buttonId === "CHOICE_COURSES" ||
         buttonId === "CHOICE_JOB" ||
-        (selectedOption && state.step === "AWAITING_CHOICE")
+        selectedOption
       ) {
         updateConversationState(from, "COMPLETED");
         await Promise.allSettled([
@@ -307,10 +307,14 @@ async function handleWebhook(req, res) {
         continue;
       }
 
-      // Step 1: Initial contact / greeting -> save phone + date + time & send Sprout info prompt
+      // Step 1: Initial contact / greeting -> save phone + 1st message + date + time & send Sprout info prompt
       updateConversationState(from, "AWAITING_DETAILS");
+      const firstMessage = rawText.trim() || `[${message.type || "message"}]`;
       await Promise.allSettled([
-        googleSheetService.recordUserNumber({ phoneNumber: from }),
+        googleSheetService.recordUserNumber({
+          phoneNumber: from,
+          firstMessage
+        }),
         whatsappService.sendTextMessage(from, SPROUT_WELCOME_REPLY)
       ]);
     }

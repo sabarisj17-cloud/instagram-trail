@@ -77,9 +77,9 @@ async function runTests() {
 
     const step1Sheet = postedCalls.find((c) => c.url.includes("script.google.com"));
     const step1Wa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
-    assert.deepStrictEqual(step1Sheet.data, { phoneNumber: testPhone });
+    assert.deepStrictEqual(step1Sheet.data, { phoneNumber: testPhone, firstMessage: "Hi" });
     assert.strictEqual(step1Wa.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
-    console.log("✅ Test 2 passed: Greeting stores number & sends Sprout info prompt.");
+    console.log("✅ Test 2 passed: Greeting stores number & 1st message, sends Sprout info prompt.");
 
     // Test 3: Step 2 user sends 3-line details -> saves details & sends [Courses] / [Job] buttons
     postedCalls.length = 0;
@@ -295,9 +295,12 @@ async function runTests() {
 
     const adSheet = postedCalls.find((c) => c.url.includes("script.google.com"));
     const adWa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
-    assert.deepStrictEqual(adSheet.data, { phoneNumber: "919888777666" });
+    assert.deepStrictEqual(adSheet.data, {
+      phoneNumber: "919888777666",
+      firstMessage: "Hello! I saw your ad, please share details"
+    });
     assert.strictEqual(adWa.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
-    console.log("✅ Test 7 passed: Meta Click-to-WhatsApp Ad opening message triggers Step 1 cleanly.");
+    console.log("✅ Test 7 passed: Meta Click-to-WhatsApp Ad opening message triggers Step 1 & stores 1st message.");
 
     console.log("\n==================================================");
     console.log("🎉 ALL TESTS PASSED!");

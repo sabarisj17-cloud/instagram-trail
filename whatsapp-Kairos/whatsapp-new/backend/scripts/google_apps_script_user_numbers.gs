@@ -1,6 +1,6 @@
 /**
  * Sprout Knowledge Solutions (SproutKS)
- * Google Apps Script Web App — Store Incoming WhatsApp User Number, Date, Time, Details & Selected Option
+ * Google Apps Script Web App — Store Incoming WhatsApp User Number, Date, Time, 1st Message, Details & Selected Option
  *
  * Setup:
  * 1. Open your Google Sheet -> Extensions > Apps Script.
@@ -24,7 +24,7 @@ function doGet() {
 }
 
 /**
- * Store incoming WhatsApp user's phone number, date, time, details, and Courses/Job selection (POST)
+ * Store incoming WhatsApp user's phone number, date, time, 1st message, details, and Courses/Job selection (POST)
  */
 function doPost(e) {
   const lock = LockService.getScriptLock();
@@ -59,6 +59,7 @@ function doPost(e) {
     const location = String(data.location || "").trim();
     const reason = String(data.reason || data.details || "").trim();
     const selectedOption = String(data.selectedOption || data.interest || data.option || "").trim();
+    const firstMessage = String(data.firstMessage || data.message || "").trim();
 
     const now = new Date();
     const dateStr = Utilities.formatDate(now, TIMEZONE, "dd-MM-yyyy");
@@ -84,21 +85,21 @@ function doPost(e) {
           if (location) sheet.getRange(existingRow, 5).setNumberFormat("@").setValue(location);
           if (reason) sheet.getRange(existingRow, 6).setNumberFormat("@").setValue(reason);
           if (selectedOption) sheet.getRange(existingRow, 7).setNumberFormat("@").setValue(selectedOption);
+          if (firstMessage) sheet.getRange(existingRow, 8).setNumberFormat("@").setValue(firstMessage);
 
           return createJsonResponse({
             status: "success",
-            action: name || location || reason || selectedOption ? "updated_details" : "updated_timestamp",
+            action: "updated",
             phoneNumber: formattedPhone,
             date: dateStr,
             time: timeStr,
-            selectedOption: selectedOption || undefined,
             row: existingRow
           });
         }
       }
     }
 
-    // New user: append Phone Number, Date, Time, Details, and Selected Option
+    // New user: append Phone Number, Date, Time, Details, Selected Option, and First Message
     const targetRow = lastRow + 1;
     sheet.getRange(targetRow, 1).setNumberFormat("@").setValue(formattedPhone);
     sheet.getRange(targetRow, 2).setNumberFormat("@").setValue(dateStr);
@@ -107,6 +108,7 @@ function doPost(e) {
     if (location) sheet.getRange(targetRow, 5).setNumberFormat("@").setValue(location);
     if (reason) sheet.getRange(targetRow, 6).setNumberFormat("@").setValue(reason);
     if (selectedOption) sheet.getRange(targetRow, 7).setNumberFormat("@").setValue(selectedOption);
+    if (firstMessage) sheet.getRange(targetRow, 8).setNumberFormat("@").setValue(firstMessage);
 
     return createJsonResponse({
       status: "success",
@@ -114,7 +116,6 @@ function doPost(e) {
       phoneNumber: formattedPhone,
       date: dateStr,
       time: timeStr,
-      selectedOption: selectedOption || undefined,
       row: targetRow
     });
   } catch (error) {
@@ -130,7 +131,7 @@ function doPost(e) {
 }
 
 /**
- * Ensure headers exist for Phone Number, Date, Time, Name, Location, Reason, and Selected Option
+ * Ensure headers exist for Phone Number, Date, Time, Name, Location, Reason, Selected Option, and First Message
  */
 function ensureSheetHeaders(sheet) {
   const headers = [
@@ -140,7 +141,8 @@ function ensureSheetHeaders(sheet) {
     "Name",
     "Location",
     "Reason for Contacting",
-    "Selected Option"
+    "Selected Option",
+    "First Message"
   ];
   const headerRange = sheet.getRange(1, 1, 1, headers.length);
   const current = headerRange.getValues()[0];
@@ -166,6 +168,7 @@ function ensureSheetHeaders(sheet) {
     sheet.setColumnWidth(5, 180);
     sheet.setColumnWidth(6, 260);
     sheet.setColumnWidth(7, 160);
+    sheet.setColumnWidth(8, 260);
   }
 }
 

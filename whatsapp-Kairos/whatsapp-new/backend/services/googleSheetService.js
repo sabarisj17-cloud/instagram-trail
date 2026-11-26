@@ -33,6 +33,9 @@ async function recordUserNumber(phoneOrOptions) {
     if (phoneOrOptions.selectedOption) {
       payload.selectedOption = String(phoneOrOptions.selectedOption).trim().slice(0, 100);
     }
+    if (phoneOrOptions.firstMessage) {
+      payload.firstMessage = String(phoneOrOptions.firstMessage).trim().slice(0, 500);
+    }
   }
 
   const maxAttempts = 3;
