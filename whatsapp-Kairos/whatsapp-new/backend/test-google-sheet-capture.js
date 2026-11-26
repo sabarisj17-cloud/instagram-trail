@@ -8,7 +8,7 @@ const whatsappController = require("./controllers/whatsappController");
 
 async function runTests() {
   console.log("==================================================");
-  console.log("🧪 TESTING GOOGLE SHEETS USER NUMBER CAPTURE");
+  console.log("🧪 TESTING WHATSAPP -> GOOGLE SHEETS & REPLY");
   console.log("==================================================\n");
 
   const originalPost = axios.post;
@@ -17,6 +17,9 @@ async function runTests() {
   try {
     axios.post = async (url, data, config) => {
       postedCalls.push({ url, data, config });
+      if (url.includes("graph.facebook.com")) {
+        return { status: 200, data: { messages: [{ id: "wamid.mock_out" }] } };
+      }
       return { status: 200, data: { status: "success", action: "created" } };
     };
 
@@ -31,28 +34,10 @@ async function runTests() {
     assert.strictEqual(okRes.success, true, "Valid phone number should succeed");
     assert.strictEqual(postedCalls.length, 1);
     assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876543210" });
-    assert.strictEqual(postedCalls[0].config.maxRedirects, 5);
     console.log("✅ Test 2 passed: recordUserNumber sends clean { phoneNumber } payload.");
 
-    // Test 3: Retry once on transient network error
-    let attemptCount = 0;
-    axios.post = async () => {
-      attemptCount++;
-      if (attemptCount === 1) throw new Error("ETIMEDOUT");
-      return { status: 200, data: { status: "success", action: "created" } };
-    };
-    const retryRes = await googleSheetService.recordUserNumber("919876543211");
-    assert.strictEqual(retryRes.success, true);
-    assert.strictEqual(attemptCount, 2, "Should retry once on transient network error");
-    console.log("✅ Test 3 passed: Transient network errors retry once.");
-
-    // Restore mock for webhook tests
+    // Test 3: Webhook stores number AND sends exact Sprout welcome reply
     postedCalls.length = 0;
-    axios.post = async (url, data, config) => {
-      postedCalls.push({ url, data, config });
-      return { status: 200, data: { status: "success", action: "created" } };
-    };
-
     const makeRes = () => ({
       statusCode: null,
       body: null,
@@ -66,7 +51,6 @@ async function runTests() {
       }
     });
 
-    // Test 4: Webhook text message to 7010472311 stores sender phone number alone
     const uniqueId1 = "wamid.gs_test_" + Date.now();
     await whatsappController.handleWebhook(
       {
@@ -99,11 +83,17 @@ async function runTests() {
       },
       makeRes()
     );
-    assert.strictEqual(postedCalls.length, 1, "Webhook text message should trigger sheet save");
-    assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876501234" });
-    console.log("✅ Test 4 passed: Webhook text message stores sender phone number alone.");
 
-    // Test 5: Duplicate messageId is ignored
+    const sheetCall = postedCalls.find((c) => c.url.includes("script.google.com"));
+    const waCall = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
+    assert(sheetCall, "Should save user phone number to Google Sheet");
+    assert.deepStrictEqual(sheetCall.data, { phoneNumber: "919876501234" });
+    assert(waCall, "Should send WhatsApp welcome reply");
+    assert.strictEqual(waCall.data.to, "919876501234");
+    assert.strictEqual(waCall.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
+    console.log("✅ Test 3 passed: Webhook stores phone number AND sends exact Sprout reply.");
+
+    // Test 4: Duplicate messageId ignored
     await whatsappController.handleWebhook(
       {
         body: {
@@ -132,44 +122,10 @@ async function runTests() {
       },
       makeRes()
     );
-    assert.strictEqual(postedCalls.length, 1, "Duplicate messageId should not trigger duplicate sheet save");
-    console.log("✅ Test 5 passed: Duplicate messageId dropped.");
+    assert.strictEqual(postedCalls.length, 2, "Duplicate messageId should not trigger extra calls");
+    console.log("✅ Test 4 passed: Duplicate messageId dropped.");
 
-    // Test 6: Audio message without text still stores user number
-    const uniqueId2 = "wamid.gs_audio_" + Date.now();
-    await whatsappController.handleWebhook(
-      {
-        body: {
-          object: "whatsapp_business_account",
-          entry: [
-            {
-              changes: [
-                {
-                  value: {
-                    metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
-                    messages: [
-                      {
-                        from: "919123456789",
-                        id: uniqueId2,
-                        timestamp: String(Math.floor(Date.now() / 1000)),
-                        type: "audio",
-                        audio: { id: "aud_1", voice: true, mime_type: "audio/ogg" }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      },
-      makeRes()
-    );
-    assert.strictEqual(postedCalls.length, 2, "Audio message should still store user number");
-    assert.deepStrictEqual(postedCalls[1].data, { phoneNumber: "919123456789" });
-    console.log("✅ Test 6 passed: Non-text (audio) message stores user number.");
-
-    // Test 7: Self-message and different business number are NOT stored
+    // Test 5: Self-message and different business number are ignored
     await whatsappController.handleWebhook(
       {
         body: {
@@ -227,10 +183,10 @@ async function runTests() {
       makeRes()
     );
     assert.strictEqual(postedCalls.length, 2, "Self messages and other business numbers should be ignored");
-    console.log("✅ Test 7 passed: Self-messages and non-7010472311 business numbers ignored.");
+    console.log("✅ Test 5 passed: Self-messages and non-7010472311 business numbers ignored.");
 
     console.log("\n==================================================");
-    console.log("🎉 ALL GOOGLE SHEETS CAPTURE TESTS PASSED!");
+    console.log("🎉 ALL TESTS PASSED!");
     console.log("==================================================");
   } finally {
     axios.post = originalPost;

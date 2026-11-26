@@ -1,5 +1,16 @@
 const googleSheetService = require("../services/googleSheetService");
+const whatsappService = require("../services/whatsappService");
 const { isDuplicateMessage } = require("../utils/conversationState");
+
+const SPROUT_WELCOME_REPLY = [
+  "Hello 👋 Thank you for contacting Sprout.",
+  "Kindly provide the following information:",
+  "Name:",
+  "Location:",
+  "Reason for contacting:",
+  "",
+  "Our representative will contact you shortly with complete details."
+].join("\n");
 
 /**
  * Handle Meta Webhook Verification (GET /webhook)
@@ -28,7 +39,7 @@ function verifyWebhook(req, res) {
 
 /**
  * Handle Incoming WhatsApp Messages (POST /webhook)
- * Stores sender's WhatsApp phone number in Google Sheets.
+ * Stores sender's WhatsApp phone number in Google Sheets and sends the Sprout welcome reply.
  */
 async function handleWebhook(req, res) {
   res.status(200).send("EVENT_RECEIVED");
@@ -85,9 +96,10 @@ async function handleWebhook(req, res) {
         continue;
       }
 
-      await googleSheetService.recordUserNumber(from).catch((sheetErr) => {
-        console.error(`[GoogleSheetService] Failed to record +${from}:`, sheetErr.message);
-      });
+      await Promise.allSettled([
+        googleSheetService.recordUserNumber(from),
+        whatsappService.sendTextMessage(from, SPROUT_WELCOME_REPLY)
+      ]);
     }
   } catch (error) {
     console.error("[Webhook Error]:", error.message);
@@ -96,5 +108,6 @@ async function handleWebhook(req, res) {
 
 module.exports = {
   verifyWebhook,
-  handleWebhook
+  handleWebhook,
+  SPROUT_WELCOME_REPLY
 };
