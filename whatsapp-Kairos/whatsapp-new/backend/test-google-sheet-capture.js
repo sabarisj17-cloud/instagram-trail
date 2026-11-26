@@ -5,8 +5,6 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const axios = require("axios");
 const googleSheetService = require("./services/googleSheetService");
 const whatsappController = require("./controllers/whatsappController");
-const chatbotService = require("./services/chatbotService");
-const whatsappService = require("./services/whatsappService");
 
 async function runTests() {
   console.log("==================================================");
@@ -14,10 +12,6 @@ async function runTests() {
   console.log("==================================================\n");
 
   const originalPost = axios.post;
-  const originalProcessMessage = chatbotService.processMessage;
-  const originalSendSeq = whatsappService.sendMessageSequence;
-  const originalMarkAsRead = whatsappService.markAsRead;
-
   const postedCalls = [];
 
   try {
@@ -25,17 +19,14 @@ async function runTests() {
       postedCalls.push({ url, data, config });
       return { status: 200, data: { status: "success", action: "created" } };
     };
-    chatbotService.processMessage = async () => [];
-    whatsappService.sendMessageSequence = async () => {};
-    whatsappService.markAsRead = async () => {};
 
     // Test 1: Invalid phone rejected
     const badRes = await googleSheetService.recordUserNumber("123");
     assert.strictEqual(badRes.success, false, "Should reject short phone numbers");
     assert.strictEqual(postedCalls.length, 0, "Should not call Apps Script for invalid phone");
-    console.log("✅ Test 1 passed: Invalid phone numbers rejected before HTTP call.");
+    console.log("✅ Test 1 passed: Invalid phone numbers rejected.");
 
-    // Test 2: Valid phone sends ONLY phoneNumber to the script URL
+    // Test 2: Valid phone sends ONLY phoneNumber
     const okRes = await googleSheetService.recordUserNumber("+91 98765 43210");
     assert.strictEqual(okRes.success, true, "Valid phone number should succeed");
     assert.strictEqual(postedCalls.length, 1);
@@ -47,9 +38,7 @@ async function runTests() {
     let attemptCount = 0;
     axios.post = async () => {
       attemptCount++;
-      if (attemptCount === 1) {
-        throw new Error("ETIMEDOUT");
-      }
+      if (attemptCount === 1) throw new Error("ETIMEDOUT");
       return { status: 200, data: { status: "success", action: "created" } };
     };
     const retryRes = await googleSheetService.recordUserNumber("919876543211");
@@ -88,19 +77,17 @@ async function runTests() {
               changes: [
                 {
                   value: {
-                    messaging_product: "whatsapp",
                     metadata: {
                       display_phone_number: "917010472311",
                       phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID || "1373840235818636"
                     },
-                    contacts: [{ profile: { name: "Arjun" }, wa_id: "919876501234" }],
                     messages: [
                       {
                         from: "919876501234",
                         id: uniqueId1,
                         timestamp: String(Math.floor(Date.now() / 1000)),
                         type: "text",
-                        text: { body: "Hello Kairos" }
+                        text: { body: "Hello" }
                       }
                     ]
                   }
@@ -112,7 +99,6 @@ async function runTests() {
       },
       makeRes()
     );
-    await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 1, "Webhook text message should trigger sheet save");
     assert.deepStrictEqual(postedCalls[0].data, { phoneNumber: "919876501234" });
     console.log("✅ Test 4 passed: Webhook text message stores sender phone number alone.");
@@ -134,7 +120,7 @@ async function runTests() {
                         id: uniqueId1,
                         timestamp: String(Math.floor(Date.now() / 1000)),
                         type: "text",
-                        text: { body: "Hello Kairos" }
+                        text: { body: "Hello" }
                       }
                     ]
                   }
@@ -146,7 +132,6 @@ async function runTests() {
       },
       makeRes()
     );
-    await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 1, "Duplicate messageId should not trigger duplicate sheet save");
     console.log("✅ Test 5 passed: Duplicate messageId dropped.");
 
@@ -180,10 +165,9 @@ async function runTests() {
       },
       makeRes()
     );
-    await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 2, "Audio message should still store user number");
     assert.deepStrictEqual(postedCalls[1].data, { phoneNumber: "919123456789" });
-    console.log("✅ Test 6 passed: Non-text (audio) message still stores user number.");
+    console.log("✅ Test 6 passed: Non-text (audio) message stores user number.");
 
     // Test 7: Self-message and different business number are NOT stored
     await whatsappController.handleWebhook(
@@ -242,7 +226,6 @@ async function runTests() {
       },
       makeRes()
     );
-    await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(postedCalls.length, 2, "Self messages and other business numbers should be ignored");
     console.log("✅ Test 7 passed: Self-messages and non-7010472311 business numbers ignored.");
 
@@ -251,9 +234,6 @@ async function runTests() {
     console.log("==================================================");
   } finally {
     axios.post = originalPost;
-    chatbotService.processMessage = originalProcessMessage;
-    whatsappService.sendMessageSequence = originalSendSeq;
-    whatsappService.markAsRead = originalMarkAsRead;
   }
 }
 
