@@ -2,6 +2,10 @@
  * Sprout Knowledge Solutions (SproutKS)
  * Google Apps Script Web App — Store Incoming WhatsApp User Number, Date, Time, 1st Message, Details & Selected Option
  *
+ * Behavior:
+ * - Same user messaging on the SAME date: updates that day's row (keeps Step 1, Step 2, Step 3 on one row for that date).
+ * - Same user messaging on a DIFFERENT date (after some days): keeps previous date's row untouched and creates a new row for the new date.
+ *
  * Setup:
  * 1. Open your Google Sheet -> Extensions > Apps Script.
  * 2. Replace the script code with this file and Save.
@@ -72,14 +76,20 @@ function doPost(e) {
 
     const lastRow = sheet.getLastRow();
 
-    // If number already exists, update Date, Time, and any newly provided fields
+    // Match by BOTH phone number AND today's date (scan from bottom up).
+    // If the user messages again on a later date, it won't match and a new row will be created for that date.
     if (lastRow > 1) {
-      const phoneValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      for (let i = 0; i < phoneValues.length; i++) {
-        const existingDigits = String(phoneValues[i][0]).replace(/[^0-9]/g, "");
-        if (existingDigits === digits) {
+      const rows = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const existingDigits = String(rows[i][0] || "").replace(/[^0-9]/g, "");
+        const rawDateCell = rows[i][1];
+        const existingDate =
+          rawDateCell instanceof Date
+            ? Utilities.formatDate(rawDateCell, TIMEZONE, "dd-MM-yyyy")
+            : String(rawDateCell || "").trim();
+
+        if (existingDigits === digits && existingDate === dateStr) {
           const existingRow = i + 2;
-          sheet.getRange(existingRow, 2).setNumberFormat("@").setValue(dateStr);
           sheet.getRange(existingRow, 3).setNumberFormat("@").setValue(timeStr);
           if (name) sheet.getRange(existingRow, 4).setNumberFormat("@").setValue(name);
           if (location) sheet.getRange(existingRow, 5).setNumberFormat("@").setValue(location);
@@ -89,7 +99,7 @@ function doPost(e) {
 
           return createJsonResponse({
             status: "success",
-            action: "updated",
+            action: "updated_same_date",
             phoneNumber: formattedPhone,
             date: dateStr,
             time: timeStr,
@@ -99,7 +109,7 @@ function doPost(e) {
       }
     }
 
-    // New user: append Phone Number, Date, Time, Details, Selected Option, and First Message
+    // New user OR same user messaging on a new date: append a new row for this date
     const targetRow = lastRow + 1;
     sheet.getRange(targetRow, 1).setNumberFormat("@").setValue(formattedPhone);
     sheet.getRange(targetRow, 2).setNumberFormat("@").setValue(dateStr);
