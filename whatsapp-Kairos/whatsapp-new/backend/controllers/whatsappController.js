@@ -152,6 +152,29 @@ function parseUserDetails(rawText) {
   return { name: "", location: "", reason: text, isStructured: false };
 }
 
+const AD_GREETING_PATTERN =
+  /^(hi|hai|hii+|hello+|helo+|hey|good\s*(morning|afternoon|evening)|namaste|vanakkam|start|menu|can i get more info|i('?m| am) interested|interested|more info)\b/i;
+
+/**
+ * Detect whether a message is an initial greeting or Click-to-WhatsApp Ad opening message
+ */
+function isGreetingOrAdEntry(message, rawText) {
+  if (message && message.referral) {
+    return true;
+  }
+  const clean = String(rawText || "").trim().toLowerCase();
+  if (!clean) {
+    return true;
+  }
+  if (GREETING_WORDS.has(clean)) {
+    return true;
+  }
+  if (AD_GREETING_PATTERN.test(clean) && !/\b(name|location|city|reason)\s*[:-]/i.test(clean)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Handle Meta Webhook Verification (GET /webhook)
  */
@@ -239,9 +262,8 @@ async function handleWebhook(req, res) {
       }
 
       const { text: rawText, buttonId } = extractMessagePayload(message);
-      const normalizedText = rawText.trim().toLowerCase();
       const selectedOption = detectSelectedOption(rawText, buttonId);
-      const isGreeting = !rawText.trim() && !buttonId ? true : GREETING_WORDS.has(normalizedText);
+      const isGreeting = !buttonId && isGreetingOrAdEntry(message, rawText);
       const state = getConversationState(from);
       const parsed = parseUserDetails(rawText);
 

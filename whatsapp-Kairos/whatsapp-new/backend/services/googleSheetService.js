@@ -35,7 +35,7 @@ async function recordUserNumber(phoneOrOptions) {
     }
   }
 
-  const maxAttempts = 2;
+  const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const response = await axios.post(url, payload, {
@@ -57,7 +57,7 @@ async function recordUserNumber(phoneOrOptions) {
       const status = error.response?.status;
       const retryable = !status || status >= 500 || status === 429;
       if (attempt < maxAttempts && retryable) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
         continue;
       }
       console.error(`[GoogleSheetService] Error saving to Google Sheet (${cleanPhone}):`, error.message);

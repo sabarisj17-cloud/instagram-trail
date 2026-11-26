@@ -256,6 +256,49 @@ async function runTests() {
     assert.strictEqual(postedCalls.length, 0);
     console.log("✅ Test 6 passed: Duplicate & self-messages ignored.");
 
+    // Test 7: Click-to-WhatsApp Ad opening message with comma + referral triggers Step 1 (not Step 2)
+    postedCalls.length = 0;
+    clearAllSessions();
+    await whatsappController.handleWebhook(
+      {
+        body: {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    metadata: { display_phone_number: "917010472311", phone_number_id: "1373840235818636" },
+                    messages: [
+                      {
+                        from: "919888777666",
+                        id: "wamid.ad_" + Date.now(),
+                        timestamp: String(Math.floor(Date.now() / 1000)),
+                        type: "text",
+                        text: { body: "Hello! I saw your ad, please share details" },
+                        referral: {
+                          source_url: "https://fb.me/ad123",
+                          source_id: "1234567890",
+                          source_type: "ad"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      makeRes()
+    );
+
+    const adSheet = postedCalls.find((c) => c.url.includes("script.google.com"));
+    const adWa = postedCalls.find((c) => c.url.includes("graph.facebook.com"));
+    assert.deepStrictEqual(adSheet.data, { phoneNumber: "919888777666" });
+    assert.strictEqual(adWa.data.text.body, whatsappController.SPROUT_WELCOME_REPLY);
+    console.log("✅ Test 7 passed: Meta Click-to-WhatsApp Ad opening message triggers Step 1 cleanly.");
+
     console.log("\n==================================================");
     console.log("🎉 ALL TESTS PASSED!");
     console.log("==================================================");
