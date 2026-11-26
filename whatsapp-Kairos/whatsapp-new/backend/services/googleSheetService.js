@@ -11,7 +11,7 @@ function getUserNumberScriptUrl() {
  * Records an incoming WhatsApp user's phone number and optional details
  * into Google Sheets via the configured Apps Script Web App.
  *
- * @param {string|object} phoneOrOptions Phone number string or { phoneNumber, name, location, reason }
+ * @param {string|object} phoneOrOptions Phone number string or { phoneNumber, name, location, reason, selectedOption }
  * @returns {Promise<{success: boolean, data?: object, message?: string}>}
  */
 async function recordUserNumber(phoneOrOptions) {
@@ -30,6 +30,9 @@ async function recordUserNumber(phoneOrOptions) {
     if (phoneOrOptions.name) payload.name = String(phoneOrOptions.name).trim().slice(0, 150);
     if (phoneOrOptions.location) payload.location = String(phoneOrOptions.location).trim().slice(0, 150);
     if (phoneOrOptions.reason) payload.reason = String(phoneOrOptions.reason).trim().slice(0, 500);
+    if (phoneOrOptions.selectedOption) {
+      payload.selectedOption = String(phoneOrOptions.selectedOption).trim().slice(0, 100);
+    }
   }
 
   const maxAttempts = 2;

@@ -16,6 +16,12 @@ const SPROUT_WELCOME_REPLY = [
   "Our representative will contact you shortly with complete details."
 ].join("\n");
 
+const SPROUT_CHOICE_PROMPT = "Please select what you are looking for:";
+const SPROUT_CHOICE_BUTTONS = [
+  { id: "CHOICE_COURSES", title: "Courses" },
+  { id: "CHOICE_JOB", title: "Job" }
+];
+
 const SPROUT_CONFIRMATION_REPLY =
   "Thank you for contacting Sprout. Our representative will contact you shortly with complete details.";
 
@@ -37,27 +43,51 @@ const GREETING_WORDS = new Set([
 ]);
 
 /**
- * Extract readable text from an incoming WhatsApp message object
+ * Extract readable text and optional button ID from an incoming WhatsApp message
  */
-function extractMessageText(message) {
+function extractMessagePayload(message) {
   switch (message.type) {
     case "text":
-      return message.text?.body || "";
+      return { text: message.text?.body || "", buttonId: null };
     case "image":
-      return message.image?.caption || "";
+      return { text: message.image?.caption || "", buttonId: null };
     case "video":
-      return message.video?.caption || "";
+      return { text: message.video?.caption || "", buttonId: null };
     case "button":
-      return message.button?.text || "";
+      return {
+        text: message.button?.text || "",
+        buttonId: message.button?.payload || message.button?.text || null
+      };
     case "interactive":
-      return (
-        message.interactive?.button_reply?.title ||
-        message.interactive?.list_reply?.title ||
-        ""
-      );
+      if (message.interactive?.type === "button_reply") {
+        return {
+          text: message.interactive.button_reply?.title || "",
+          buttonId: message.interactive.button_reply?.id || null
+        };
+      }
+      if (message.interactive?.type === "list_reply") {
+        return {
+          text: message.interactive.list_reply?.title || "",
+          buttonId: message.interactive.list_reply?.id || null
+        };
+      }
+      return { text: "", buttonId: null };
     default:
-      return "";
+      return { text: "", buttonId: null };
   }
+}
+
+/**
+ * Detect Courses or Job selection from button ID or text
+ */
+function detectSelectedOption(rawText, buttonId) {
+  if (buttonId === "CHOICE_COURSES") return "Courses";
+  if (buttonId === "CHOICE_JOB") return "Job";
+
+  const clean = String(rawText || "").trim().toLowerCase();
+  if (clean === "courses" || clean === "course") return "Courses";
+  if (clean === "job" || clean === "jobs") return "Job";
+  return null;
 }
 
 /**
@@ -101,10 +131,6 @@ function parseUserDetails(rawText) {
     };
   }
 
-  // Multi-line format like:
-  // sabari
-  // cbe
-  // banking
   if (lines.length >= 2) {
     name = lines[0];
     location = lines[1];
@@ -112,7 +138,6 @@ function parseUserDetails(rawText) {
     return { name, location, reason, isStructured: true };
   }
 
-  // Comma-separated format like: "sabari, cbe, banking"
   const parts = text
     .split(",")
     .map((p) => p.trim())
@@ -124,7 +149,6 @@ function parseUserDetails(rawText) {
     return { name, location, reason, isStructured: true };
   }
 
-  // Single free-text detail message
   return { name: "", location: "", reason: text, isStructured: false };
 }
 
@@ -156,7 +180,8 @@ function verifyWebhook(req, res) {
 /**
  * Handle Incoming WhatsApp Messages (POST /webhook)
  * 1. First contact / greeting: stores phone + date + time and asks for Name, Location, Reason.
- * 2. When user replies with details: saves Name, Location, Reason (+ phone, date, time) and sends confirmation.
+ * 2. Details reply: saves Name, Location, Reason and sends [Courses] / [Job] buttons.
+ * 3. Option click (Courses / Job): saves selectedOption to Sheets and sends final confirmation.
  */
 async function handleWebhook(req, res) {
   res.status(200).send("EVENT_RECEIVED");
@@ -213,22 +238,41 @@ async function handleWebhook(req, res) {
         continue;
       }
 
-      const rawText = extractMessageText(message);
+      const { text: rawText, buttonId } = extractMessagePayload(message);
       const normalizedText = rawText.trim().toLowerCase();
-      const isGreeting = !rawText.trim() || GREETING_WORDS.has(normalizedText);
+      const selectedOption = detectSelectedOption(rawText, buttonId);
+      const isGreeting = !rawText.trim() && !buttonId ? true : GREETING_WORDS.has(normalizedText);
       const state = getConversationState(from);
       const parsed = parseUserDetails(rawText);
 
-      // Treat as user details if they've already been prompted (or submitted structured details even after a server restart)
+      // Step 3: User clicked [Courses] or [Job] (or typed "courses" / "job" when prompted)
+      if (
+        buttonId === "CHOICE_COURSES" ||
+        buttonId === "CHOICE_JOB" ||
+        (selectedOption && state.step === "AWAITING_CHOICE")
+      ) {
+        updateConversationState(from, "COMPLETED");
+        await Promise.allSettled([
+          googleSheetService.recordUserNumber({
+            phoneNumber: from,
+            selectedOption
+          }),
+          whatsappService.sendTextMessage(from, SPROUT_CONFIRMATION_REPLY)
+        ]);
+        continue;
+      }
+
+      // Step 2: User provided details -> save details & ask Courses or Job via interactive buttons
       const isDetailsSubmission =
         !isGreeting &&
         parsed &&
         (state.step === "AWAITING_DETAILS" ||
-          state.step === "DETAILS_SUBMITTED" ||
+          state.step === "AWAITING_CHOICE" ||
+          state.step === "COMPLETED" ||
           parsed.isStructured);
 
       if (isDetailsSubmission) {
-        updateConversationState(from, "DETAILS_SUBMITTED");
+        updateConversationState(from, "AWAITING_CHOICE");
         await Promise.allSettled([
           googleSheetService.recordUserNumber({
             phoneNumber: from,
@@ -236,15 +280,17 @@ async function handleWebhook(req, res) {
             location: parsed.location,
             reason: parsed.reason
           }),
-          whatsappService.sendTextMessage(from, SPROUT_CONFIRMATION_REPLY)
+          whatsappService.sendButtonMessage(from, SPROUT_CHOICE_PROMPT, SPROUT_CHOICE_BUTTONS)
         ]);
-      } else {
-        updateConversationState(from, "AWAITING_DETAILS");
-        await Promise.allSettled([
-          googleSheetService.recordUserNumber({ phoneNumber: from }),
-          whatsappService.sendTextMessage(from, SPROUT_WELCOME_REPLY)
-        ]);
+        continue;
       }
+
+      // Step 1: Initial contact / greeting -> save phone + date + time & send Sprout info prompt
+      updateConversationState(from, "AWAITING_DETAILS");
+      await Promise.allSettled([
+        googleSheetService.recordUserNumber({ phoneNumber: from }),
+        whatsappService.sendTextMessage(from, SPROUT_WELCOME_REPLY)
+      ]);
     }
   } catch (error) {
     console.error("[Webhook Error]:", error.message);
@@ -255,6 +301,9 @@ module.exports = {
   verifyWebhook,
   handleWebhook,
   parseUserDetails,
+  detectSelectedOption,
   SPROUT_WELCOME_REPLY,
+  SPROUT_CHOICE_PROMPT,
+  SPROUT_CHOICE_BUTTONS,
   SPROUT_CONFIRMATION_REPLY
 };
